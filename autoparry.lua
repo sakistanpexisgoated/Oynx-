@@ -1,8 +1,7 @@
 --[[
     Blade Ball Auto Parry Script
     Platforms: Windows, Mac, iOS, Android
-    Executors: Delta, Xeno, Wave, Potassium, Codex, Arceus X, Fluxus, Hydrogen
-    Anti-kick: no virtual input, remote-only, rate limited
+    Anti-kick: remote-only, no virtual input, rate limited
 --]]
 
 local Players = game:GetService("Players")
@@ -10,6 +9,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -47,8 +47,8 @@ local Config = {
     HumanizeDelay = true,
     HumanizeMin = 0.05,
     HumanizeMax = 0.15,
-    AutoSpam = false,
     EnableGUI = true,
+    Debug = false,
 }
 
 local AntiKick = {
@@ -60,29 +60,32 @@ local parryConnection = nil
 local lastParryTime = 0
 local parryCount = 0
 local lastResetTime = tick()
+local focusedBall = nil
+
+-- ========== GET REMOTE ==========
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
+local ParryButtonPress = Remotes:WaitForChild("ParryButtonPress", 9e9)
 
 -- ========== GET BALL ==========
-local function GetRealBall()
+local function GetBall()
     local ballsFolder = Workspace:FindFirstChild("Balls")
     if not ballsFolder then return nil end
     for _, ball in ipairs(ballsFolder:GetChildren()) do
-        if ball:IsA("BasePart") and ball:GetAttribute("realBall") then
+        if ball:IsA("BasePart") and ball:GetAttribute("realBall") == true then
             return ball
         end
     end
     return nil
 end
 
--- ========== GET CHARACTER ==========
-local function GetHRP()
+-- ========== IS TARGET ==========
+local function IsTarget()
     local char = LocalPlayer.Character
-    if char then
-        return char:FindFirstChild("HumanoidRootPart")
-    end
-    return nil
+    if not char then return false end
+    return char:FindFirstChild("Highlight") ~= nil
 end
 
--- ========== EXECUTE PARRY (remote only, no virtual input) ==========
+-- ========== EXECUTE PARRY ==========
 local function ExecuteParry()
     if not Config.AutoParry then return end
     local now = tick()
@@ -103,12 +106,9 @@ local function ExecuteParry()
     end
 
     pcall(function()
-        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-        if remotes then
-            local parryRemote = remotes:FindFirstChild("ParryButtonPress")
-            if parryRemote then
-                parryRemote:FireServer()
-            end
+        ParryButtonPress:Fire()
+        if Config.Debug then
+            print("[FAx] Parry fired")
         end
     end)
 end
@@ -116,18 +116,22 @@ end
 -- ========== MAIN LOOP ==========
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
-    parryConnection = RunService.Heartbeat:Connect(function()
+    parryConnection = RunService.PreSimulation:Connect(function()
         if not Config.AutoParry then return end
-        local ball = GetRealBall()
-        local hrp = GetHRP()
+
+        local ball = GetBall()
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not ball or not hrp then return end
-        local target = ball:GetAttribute("target")
-        if target ~= LocalPlayer.Name then return end
+
+        if not IsTarget() then return end
+
         local distance = (hrp.Position - ball.Position).Magnitude
         local velocity = ball.AssemblyLinearVelocity.Magnitude
         if velocity < 1 then return end
+
         local timeToReach = distance / velocity
         local parryWindow = 0.55 + Config.PingOffset
+
         if timeToReach <= parryWindow and timeToReach > 0 then
             ExecuteParry()
         end
@@ -152,7 +156,7 @@ local function CreateGUI()
     end
 
     local frameW = IsMobile and 300 or 280
-    local frameH = IsMobile and 340 or 300
+    local frameH = IsMobile and 320 or 280
     local btnH = IsMobile and 50 or 40
 
     local mainFrame = Instance.new("Frame")
@@ -209,29 +213,9 @@ local function CreateGUI()
         parryBtn.BackgroundColor3 = Config.AutoParry and Color3.fromRGB(168, 85, 247) or Color3.fromRGB(60, 50, 80)
     end)
 
-    local spamBtn = Instance.new("TextButton")
-    spamBtn.Size = UDim2.new(0.9, 0, 0, btnH)
-    spamBtn.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 10)
-    spamBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
-    spamBtn.Text = "Auto Spam: OFF"
-    spamBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    spamBtn.TextSize = IsMobile and 16 or 14
-    spamBtn.Font = Enum.Font.Gotham
-    spamBtn.Parent = mainFrame
-
-    local spamCorner = Instance.new("UICorner")
-    spamCorner.CornerRadius = UDim.new(0, 6)
-    spamCorner.Parent = spamBtn
-
-    spamBtn.MouseButton1Click:Connect(function()
-        Config.AutoSpam = not Config.AutoSpam
-        spamBtn.Text = "Auto Spam: " .. (Config.AutoSpam and "ON" or "OFF")
-        spamBtn.BackgroundColor3 = Config.AutoSpam and Color3.fromRGB(168, 85, 247) or Color3.fromRGB(60, 50, 80)
-    end)
-
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(0.9, 0, 0, 30)
-    status.Position = UDim2.new(0.05, 0, 0, 60 + (btnH * 2) + 20)
+    status.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 20)
     status.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
     status.Text = "Platform: " .. Platform .. " | Ready"
     status.TextColor3 = Color3.fromRGB(52, 211, 153)
@@ -243,19 +227,19 @@ local function CreateGUI()
     statusCorner.CornerRadius = UDim.new(0, 6)
     statusCorner.Parent = status
 
-    local antiKickInfo = Instance.new("TextLabel")
-    antiKickInfo.Size = UDim2.new(0.9, 0, 0, 60)
-    antiKickInfo.Position = UDim2.new(0.05, 0, 0, 60 + (btnH * 2) + 60)
-    antiKickInfo.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
-    antiKickInfo.Text = "Anti-Kick: ON\nRate: " .. AntiKick.MaxParryPerSecond .. "/s | Remote only"
-    antiKickInfo.TextColor3 = Color3.fromRGB(186, 172, 212)
-    antiKickInfo.TextSize = IsMobile and 12 or 11
-    antiKickInfo.Font = Enum.Font.Gotham
-    antiKickInfo.Parent = mainFrame
+    local info = Instance.new("TextLabel")
+    info.Size = UDim2.new(0.9, 0, 0, 50)
+    info.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 60)
+    info.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
+    info.Text = "Remote: ParryButtonPress\nRate: " .. AntiKick.MaxParryPerSecond .. "/s | No VInput"
+    info.TextColor3 = Color3.fromRGB(186, 172, 212)
+    info.TextSize = IsMobile and 12 or 11
+    info.Font = Enum.Font.Gotham
+    info.Parent = mainFrame
 
-    local antiCorner = Instance.new("UICorner")
-    antiCorner.CornerRadius = UDim.new(0, 6)
-    antiCorner.Parent = antiKickInfo
+    local infoCorner = Instance.new("UICorner")
+    infoCorner.CornerRadius = UDim.new(0, 6)
+    infoCorner.Parent = info
 
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 30, 0, 30)
@@ -281,7 +265,7 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Mode: remote-only (no virtual input)")
+print("[FAx] Remote: ParryButtonPress | Rate: " .. AntiKick.MaxParryPerSecond .. "/s")
 
 if Config.EnableGUI then
     CreateGUI()
