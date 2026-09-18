@@ -7,37 +7,52 @@ if not success or not Rayfield then return end
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local Player = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
-    Name = "Onyx Hub | Blade Ball Fixed",
-    LoadingTitle = "Onyx Direct Hook...",
+    Name = "Onyx Hub | Ultimate Parry v2",
+    LoadingTitle = "Onyx Final Build...",
     LoadingSubtitle = "by You",
     ConfigurationSaving = { Enabled = false }
 })
 
 local MainTab = Window:CreateTab("Combat", 4483362458)
-MainTab:CreateSection("Direct Auto Parry")
+MainTab:CreateSection("Bulletproof Auto Parry")
 
 local autoParryEnabled = false
 
 local function TriggerParry()
+    -- Try firing known Blade Ball remotes safely
     pcall(function()
-        ReplicatedStorage.Remotes.ParryButtonPress:Fire()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes then
+            if remotes:FindFirstChild("ParryButtonPress") then
+                remotes.ParryButtonPress:FireServer()
+            elseif remotes:FindFirstChild("ParryAttempt") then
+                remotes.ParryAttempt:FireServer()
+            end
+        end
+    end)
+    
+    -- Universal mobile tap simulation fallback
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(400, 400, 0, true, game, 0)
+        task.wait(0.01)
+        VirtualInputManager:SendMouseButtonEvent(400, 400, 0, false, game, 0)
     end)
 end
 
 MainTab:CreateToggle({
-    Name = "Instant Auto Parry",
+    Name = "Auto Parry (With Debug Notifier)",
     CurrentValue = false,
-    Flag = "InstantParry",
+    Flag = "DebugParry",
     Callback = function(Value)
         autoParryEnabled = Value
         
-        -- Start a background task loop while toggled on
         task.spawn(function()
             while autoParryEnabled do
-                task.wait()
+                task.wait(0.02)
                 pcall(function()
                     local character = Player.Character
                     local hrp = character and character:FindFirstChild("HumanoidRootPart")
@@ -45,22 +60,23 @@ MainTab:CreateToggle({
                     
                     if hrp and ballsFolder then
                         for _, ball in ipairs(ballsFolder:GetChildren()) do
-                            if ball:GetAttribute("realBall") == true then
-                                local distance = (hrp.Position - ball.Position).Magnitude
-                                local target = ball:GetAttribute("target")
+                            local ballPos = ball:IsA("Model") and ball.PrimaryPart and ball.PrimaryPart.Position or (ball:IsA("BasePart") and ball.Position)
+                            
+                            if ballPos then
+                                local distance = (hrp.Position - ballPos).Magnitude
                                 
-                                -- If it's targeting us or gets dangerously close, fire instantly
-                                if target == Player.Name or distance <= 22 then
-                                    local velocity = ball.AssemblyLinearVelocity.Magnitude
-                                    if velocity < 1 then velocity = 1 end
+                                -- If ball is within 35 studs, fire parry and notify you
+                                if distance <= 35 then
+                                    TriggerParry()
                                     
-                                    local timeToCollision = distance / velocity
+                                    -- Popup notification to prove it triggered
+                                    Rayfield:Notify({
+                                        Title = "Parry Triggered!",
+                                        Content = "Distance: " .. math.floor(distance) .. " studs",
+                                        Duration = 1,
+                                    })
                                     
-                                    -- Generous trigger window to guarantee it hits
-                                    if timeToCollision <= 1.5 or distance <= 16 then
-                                        TriggerParry()
-                                        task.wait(0.15)
-                                    end
+                                    task.wait(0.25) -- cooldown block
                                 end
                             end
                         end
@@ -72,7 +88,7 @@ MainTab:CreateToggle({
 })
 
 Rayfield:Notify({
-    Title = "Onyx Hub Ready",
-    Content = "Direct parry loop active.",
-    Duration = 4,
+    Title = "Onyx Hub Loaded",
+    Content = "Ready for match testing.",
+    Duration = 3,
 })
