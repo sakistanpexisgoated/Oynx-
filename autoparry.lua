@@ -2,7 +2,7 @@
     Blade Ball Auto Parry Script
     Platforms: Windows, Mac, iOS, Android
     Executors: Delta, Xeno, Wave, Potassium, Codex, Arceus X, Fluxus, Hydrogen
-    Note: Based on distance and ball speed. Built-in basic anti-kick logic.
+    Anti-kick: no virtual input, remote-only, rate limited
 --]]
 
 local Players = game:GetService("Players")
@@ -10,7 +10,6 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
-local GuiService = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -18,27 +17,20 @@ local LocalPlayer = Players.LocalPlayer
 local Platform = "Unknown"
 local IsMobile = false
 local IsDesktop = false
-local HasVirtualInput = pcall(function() return game:GetService("VirtualInputManager") end)
-local VirtualInputManager = HasVirtualInput and game:GetService("VirtualInputManager") or nil
 
 pcall(function()
-    local ok, result = pcall(function()
-        return UserInputService:GetPlatform()
-    end)
-    if ok and result then
-        if result == Enum.Platform.Windows then
-            Platform = "Windows"; IsDesktop = true
-        elseif result == Enum.Platform.OSX then
-            Platform = "Mac"; IsDesktop = true
-        elseif result == Enum.Platform.IOS then
-            Platform = "iOS"; IsMobile = true
-        elseif result == Enum.Platform.Android then
-            Platform = "Android"; IsMobile = true
-        end
+    local result = UserInputService:GetPlatform()
+    if result == Enum.Platform.Windows then
+        Platform = "Windows"; IsDesktop = true
+    elseif result == Enum.Platform.OSX then
+        Platform = "Mac"; IsDesktop = true
+    elseif result == Enum.Platform.IOS then
+        Platform = "iOS"; IsMobile = true
+    elseif result == Enum.Platform.Android then
+        Platform = "Android"; IsMobile = true
     end
 end)
 
--- Fallback detection if GetPlatform fails
 if Platform == "Unknown" then
     if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
         Platform = "Mobile"; IsMobile = true
@@ -50,7 +42,6 @@ end
 -- ========== CONFIG ==========
 local Config = {
     AutoParry = true,
-    ParryKey = "K",           -- Desktop parry key
     ParryCooldown = 0.15,
     PingOffset = 0.05,
     HumanizeDelay = true,
@@ -58,12 +49,11 @@ local Config = {
     HumanizeMax = 0.15,
     AutoSpam = false,
     EnableGUI = true,
-    MobileButtonSize = 60,     -- Bigger touch targets on mobile
 }
 
 local AntiKick = {
-    MaxParryPerSecond = 8,
-    UseVirtualInput = HasVirtualInput and IsDesktop,  -- Mobile falls back to remote
+    MaxParryPerSecond = 4,
+    UseVirtualInput = false,
 }
 
 local parryConnection = nil
@@ -92,7 +82,7 @@ local function GetHRP()
     return nil
 end
 
--- ========== EXECUTE PARRY ==========
+-- ========== EXECUTE PARRY (remote only, no virtual input) ==========
 local function ExecuteParry()
     if not Config.AutoParry then return end
     local now = tick()
@@ -112,21 +102,13 @@ local function ExecuteParry()
         task.wait(delay)
     end
 
-    -- Try virtual input first (desktop only)
-    if AntiKick.UseVirtualInput and VirtualInputManager then
-        local ok = pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Config.ParryKey, false, game)
-            task.wait(0.02)
-            VirtualInputManager:SendKeyEvent(false, Config.ParryKey, false, game)
-        end)
-        if ok then return end
-    end
-
-    -- Fallback: fire the parry remote directly (works on all platforms)
     pcall(function()
         local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-        if remotes and remotes:FindFirstChild("Parry") then
-            remotes.Parry:FireServer()
+        if remotes then
+            local parryRemote = remotes:FindFirstChild("Parry") or remotes:FindFirstChild("ParryButtonPress")
+            if parryRemote then
+                parryRemote:FireServer()
+            end
         end
     end)
 end
@@ -159,7 +141,6 @@ local function CreateGUI()
     screenGui.Name = "R_" .. tostring(math.random(100000, 999999))
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-    -- Pick parent based on platform
     if gethui then
         pcall(function() screenGui.Parent = gethui() end)
     end
@@ -170,7 +151,6 @@ local function CreateGUI()
         screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     end
 
-    -- Mobile gets a bigger, repositioned frame
     local frameW = IsMobile and 300 or 280
     local frameH = IsMobile and 340 or 300
     local btnH = IsMobile and 50 or 40
@@ -195,7 +175,6 @@ local function CreateGUI()
     stroke.Thickness = 1
     stroke.Parent = mainFrame
 
-    -- Title bar
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 45)
     title.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
@@ -210,7 +189,6 @@ local function CreateGUI()
     titleCorner.CornerRadius = UDim.new(0, 10)
     titleCorner.Parent = title
 
-    -- Auto Parry toggle
     local parryBtn = Instance.new("TextButton")
     parryBtn.Size = UDim2.new(0.9, 0, 0, btnH)
     parryBtn.Position = UDim2.new(0.05, 0, 0, 60)
@@ -231,7 +209,6 @@ local function CreateGUI()
         parryBtn.BackgroundColor3 = Config.AutoParry and Color3.fromRGB(168, 85, 247) or Color3.fromRGB(60, 50, 80)
     end)
 
-    -- Auto Spam toggle
     local spamBtn = Instance.new("TextButton")
     spamBtn.Size = UDim2.new(0.9, 0, 0, btnH)
     spamBtn.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 10)
@@ -252,7 +229,6 @@ local function CreateGUI()
         spamBtn.BackgroundColor3 = Config.AutoSpam and Color3.fromRGB(168, 85, 247) or Color3.fromRGB(60, 50, 80)
     end)
 
-    -- Status
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(0.9, 0, 0, 30)
     status.Position = UDim2.new(0.05, 0, 0, 60 + (btnH * 2) + 20)
@@ -267,12 +243,11 @@ local function CreateGUI()
     statusCorner.CornerRadius = UDim.new(0, 6)
     statusCorner.Parent = status
 
-    -- Anti-kick info
     local antiKickInfo = Instance.new("TextLabel")
     antiKickInfo.Size = UDim2.new(0.9, 0, 0, 60)
     antiKickInfo.Position = UDim2.new(0.05, 0, 0, 60 + (btnH * 2) + 60)
     antiKickInfo.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
-    antiKickInfo.Text = "Anti-Kick: ON\nRate: " .. AntiKick.MaxParryPerSecond .. "/s | VInput: " .. (AntiKick.UseVirtualInput and "ON" or "OFF")
+    antiKickInfo.Text = "Anti-Kick: ON\nRate: " .. AntiKick.MaxParryPerSecond .. "/s | Remote only"
     antiKickInfo.TextColor3 = Color3.fromRGB(186, 172, 212)
     antiKickInfo.TextSize = IsMobile and 12 or 11
     antiKickInfo.Font = Enum.Font.Gotham
@@ -282,7 +257,6 @@ local function CreateGUI()
     antiCorner.CornerRadius = UDim.new(0, 6)
     antiCorner.Parent = antiKickInfo
 
-    -- Close
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 30, 0, 30)
     closeBtn.Position = UDim2.new(1, -35, 0, 8)
@@ -307,7 +281,7 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Virtual Input: " .. (AntiKick.UseVirtualInput and "available" or "using remote fallback"))
+print("[FAx] Mode: remote-only (no virtual input)")
 
 if Config.EnableGUI then
     CreateGUI()
@@ -315,7 +289,6 @@ end
 
 StartParryLoop()
 
--- Desktop hotkey
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.K then
