@@ -1,4 +1,11 @@
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+
+if not success or not Rayfield then
+    warn("Failed to load Rayfield library")
+    return
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -7,7 +14,7 @@ local Player = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
     Name = "Onyx Hub | Blade Ball Max",
-    LoadingTitle = "Onyx Max Accuracy...",
+    LoadingTitle = "Onyx Framework Initializing...",
     LoadingSubtitle = "by You",
     ConfigurationSaving = { Enabled = false }
 })
@@ -56,15 +63,12 @@ MainTab:CreateToggle({
                 
                 local targetAttr = ball:GetAttribute("target")
                 
-                -- Check if ball is targeting us OR if it's close enough for a clash check
                 if targetAttr == Player.Name or targetAttr == "Clash" then
                     local distance = (hrp.Position - ball.Position).Magnitude
                     local velocity = ball.AssemblyLinearVelocity.Magnitude
                     if velocity < 1 then velocity = 1 end
                     
                     local timeToCollision = distance / velocity
-                    
-                    -- Dynamic threshold: If it's a clash, spam faster. If normal, use optimized timing.
                     local threshold = (targetAttr == "Clash") and 1.2 or 0.68
                     
                     if timeToCollision <= threshold then
@@ -82,7 +86,7 @@ MainTab:CreateToggle({
 })
 
 Rayfield:Notify({
-    Title = "Onyx Hub Updated",
-    Content = "Max accuracy & clash handler loaded.",
+    Title = "Onyx Hub Loaded",
+    Content = "Successfully initialized.",
     Duration = 4,
 })
