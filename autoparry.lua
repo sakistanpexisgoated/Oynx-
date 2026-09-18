@@ -1,6 +1,6 @@
 --[[
-    Blade Ball Auto Parry - Final
-    Detection: target attribute + Distance/Speed timing
+    Blade Ball Auto Parry - Custom Build
+    Detection: target attribute + zoomies.VectorVelocity
     Remote: ParryButtonPress
 --]]
 
@@ -13,7 +13,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ========== PLATFORM ==========
 local Platform = "Unknown"
 local IsMobile = false
 local IsDesktop = false
@@ -35,10 +34,9 @@ if Platform == "Unknown" then
     end
 end
 
--- ========== CONFIG ==========
 local Config = {
     AutoParry = true,
-    ParryWindow = 0.55,       -- Distance/Speed threshold. Increase if high ping.
+    ParryWindow = 0.55,
     ParryCooldown = 0.12,
     HumanizeDelay = true,
     HumanizeMin = 0.03,
@@ -57,11 +55,9 @@ local parryCount = 0
 local lastResetTime = tick()
 local Parried = false
 
--- ========== REMOTE ==========
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
 local ParryButtonPress = Remotes:WaitForChild("ParryButtonPress", 9e9)
 
--- ========== BALL ==========
 local function GetBall()
     local ballsFolder = Workspace:FindFirstChild("Balls")
     if not ballsFolder then return nil end
@@ -73,7 +69,6 @@ local function GetBall()
     return nil
 end
 
--- ========== PARRY ==========
 local function ExecuteParry()
     if not Config.AutoParry then return end
     local now = tick()
@@ -99,11 +94,9 @@ local function ExecuteParry()
     end)
 end
 
--- ========== LOOP ==========
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
 
-    -- Reset parried flag when target changes on a new ball
     Workspace.Balls.ChildAdded:Connect(function()
         local Ball = GetBall()
         if Ball then
@@ -139,7 +132,6 @@ local function StartParryLoop()
     end)
 end
 
--- ========== GUI ==========
 local function CreateGUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.ResetOnSpawn = false
@@ -257,7 +249,6 @@ local function CreateGUI()
     return screenGui
 end
 
--- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
 print("[FAx] Detection: target attribute + zoomies.VectorVelocity")
