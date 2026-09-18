@@ -1,7 +1,7 @@
 --[[
     Blade Ball Auto Parry Script
-    Platforms: Windows, Mac, iOS, Android
-    Anti-kick: remote-only, no virtual input, rate limited
+    Detection: red ball color + distance
+    Remote: ParryButtonPress
 --]]
 
 local Players = game:GetService("Players")
@@ -13,7 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ========== PLATFORM DETECTION ==========
+-- ========== PLATFORM ==========
 local Platform = "Unknown"
 local IsMobile = false
 local IsDesktop = false
@@ -53,16 +53,14 @@ local Config = {
 
 local AntiKick = {
     MaxParryPerSecond = 4,
-    UseVirtualInput = false,
 }
 
 local parryConnection = nil
 local lastParryTime = 0
 local parryCount = 0
 local lastResetTime = tick()
-local focusedBall = nil
 
--- ========== GET REMOTE ==========
+-- ========== REMOTE ==========
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
 local ParryButtonPress = Remotes:WaitForChild("ParryButtonPress", 9e9)
 
@@ -78,11 +76,12 @@ local function GetBall()
     return nil
 end
 
--- ========== IS TARGET ==========
-local function IsTarget()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    return char:FindFirstChild("Highlight") ~= nil
+-- ========== CHECK IF BALL IS RED (targeting us) ==========
+local function IsBallRed(ball)
+    if not ball then return false end
+    -- Ball targeting you becomes red [citation:8]
+    local color = ball.Color
+    return color.R > 0.7 and color.G < 0.3 and color.B < 0.3
 end
 
 -- ========== EXECUTE PARRY ==========
@@ -123,7 +122,8 @@ local function StartParryLoop()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not ball or not hrp then return end
 
-        if not IsTarget() then return end
+        -- Only parry when ball is red (targeting us)
+        if not IsBallRed(ball) then return end
 
         local distance = (hrp.Position - ball.Position).Magnitude
         local velocity = ball.AssemblyLinearVelocity.Magnitude
@@ -156,7 +156,7 @@ local function CreateGUI()
     end
 
     local frameW = IsMobile and 300 or 280
-    local frameH = IsMobile and 320 or 280
+    local frameH = IsMobile and 280 or 240
     local btnH = IsMobile and 50 or 40
 
     local mainFrame = Instance.new("Frame")
@@ -217,7 +217,7 @@ local function CreateGUI()
     status.Size = UDim2.new(0.9, 0, 0, 30)
     status.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 20)
     status.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
-    status.Text = "Platform: " .. Platform .. " | Ready"
+    status.Text = "Detection: Red Ball | Ready"
     status.TextColor3 = Color3.fromRGB(52, 211, 153)
     status.TextSize = IsMobile and 13 or 12
     status.Font = Enum.Font.Gotham
@@ -231,7 +231,7 @@ local function CreateGUI()
     info.Size = UDim2.new(0.9, 0, 0, 50)
     info.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 60)
     info.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
-    info.Text = "Remote: ParryButtonPress\nRate: " .. AntiKick.MaxParryPerSecond .. "/s | No VInput"
+    info.Text = "Remote: ParryButtonPress\nRate: " .. AntiKick.MaxParryPerSecond .. "/s"
     info.TextColor3 = Color3.fromRGB(186, 172, 212)
     info.TextSize = IsMobile and 12 or 11
     info.Font = Enum.Font.Gotham
@@ -265,7 +265,7 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Remote: ParryButtonPress | Rate: " .. AntiKick.MaxParryPerSecond .. "/s")
+print("[FAx] Detection: Red Ball Color")
 
 if Config.EnableGUI then
     CreateGUI()
