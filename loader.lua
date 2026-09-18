@@ -1,12 +1,8 @@
--- Onyx Hub: All-In-One Self-Contained Script
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 end)
 
-if not success or not Rayfield then
-    warn("Rayfield failed to load. Check your executor internet connection.")
-    return
-end
+if not success or not Rayfield then return end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,14 +10,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Player = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
-    Name = "Onyx Hub | Blade Ball Max",
-    LoadingTitle = "Onyx Initializing...",
+    Name = "Onyx Hub | Blade Ball Absolute",
+    LoadingTitle = "Onyx Absolute Accuracy...",
     LoadingSubtitle = "by You",
     ConfigurationSaving = { Enabled = false }
 })
 
 local MainTab = Window:CreateTab("Combat", 4483362458)
-MainTab:CreateSection("Advanced Auto Parry")
+MainTab:CreateSection("Absolute Auto Parry")
 
 local autoParryEnabled = false
 local Connection
@@ -48,9 +44,9 @@ local function GetActiveBall()
 end
 
 MainTab:CreateToggle({
-    Name = "Ultra Auto Parry + Clash Mode",
+    Name = "Absolute Auto Parry (All Targets)",
     CurrentValue = false,
-    Flag = "UltraParry",
+    Flag = "AbsoluteParry",
     Callback = function(Value)
         autoParryEnabled = Value
         
@@ -62,18 +58,21 @@ MainTab:CreateToggle({
                 
                 if not hrp or not ball then return end
                 
+                -- Check if the ball exists and has a target assigned
                 local targetAttr = ball:GetAttribute("target")
-                
-                if targetAttr == Player.Name or targetAttr == "Clash" then
+                if targetAttr then
                     local distance = (hrp.Position - ball.Position).Magnitude
                     local velocity = ball.AssemblyLinearVelocity.Magnitude
                     if velocity < 1 then velocity = 1 end
                     
                     local timeToCollision = distance / velocity
-                    local threshold = (targetAttr == "Clash") and 1.2 or 0.68
                     
-                    if timeToCollision <= threshold then
-                        TriggerParry()
+                    -- Trigger if the ball is heading toward you or if a close clash is happening (< 25 studs)
+                    if targetAttr == Player.Name or targetAttr == "Clash" or distance < 25 then
+                        -- Highly sensitive threshold for instant response
+                        if timeToCollision <= 1.2 or distance <= 18 then
+                            TriggerParry()
+                        end
                     end
                 end
             end)
@@ -87,7 +86,7 @@ MainTab:CreateToggle({
 })
 
 Rayfield:Notify({
-    Title = "Onyx Hub Loaded",
-    Content = "Menu initialized successfully.",
+    Title = "Onyx Hub Updated",
+    Content = "Absolute parry mode active.",
     Duration = 4,
 })
