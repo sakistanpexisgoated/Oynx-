@@ -1,9 +1,10 @@
+-- Onyx Hub: All-In-One Self-Contained Script
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 end)
 
 if not success or not Rayfield then
-    warn("Failed to load Rayfield library")
+    warn("Rayfield failed to load. Check your executor internet connection.")
     return
 end
 
@@ -14,7 +15,7 @@ local Player = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
     Name = "Onyx Hub | Blade Ball Max",
-    LoadingTitle = "Onyx Framework Initializing...",
+    LoadingTitle = "Onyx Initializing...",
     LoadingSubtitle = "by You",
     ConfigurationSaving = { Enabled = false }
 })
@@ -87,6 +88,6 @@ MainTab:CreateToggle({
 
 Rayfield:Notify({
     Title = "Onyx Hub Loaded",
-    Content = "Successfully initialized.",
+    Content = "Menu initialized successfully.",
     Duration = 4,
 })
