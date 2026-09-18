@@ -6,22 +6,20 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Player = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
-    Name = "Onyx Hub | Blade Ball",
-    LoadingTitle = "Onyx Framework Initializing...",
+    Name = "Onyx Hub | Blade Ball Max",
+    LoadingTitle = "Onyx Max Accuracy...",
     LoadingSubtitle = "by You",
     ConfigurationSaving = { Enabled = false }
 })
 
-local MainTab = Window:CreateTab("Combat & Main", 4483362458)
-MainTab:CreateSection("Auto Parry")
+local MainTab = Window:CreateTab("Combat", 4483362458)
+MainTab:CreateSection("Advanced Auto Parry")
 
--- Reference variables
 local autoParryEnabled = false
 local Connection
 
--- Helper function to fire the parry remote safely
 local function TriggerParry()
-    local success = pcall(function()
+    pcall(function()
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
         if remotes and remotes:FindFirstChild("ParryButtonPress") then
             remotes.ParryButtonPress:Fire()
@@ -29,7 +27,6 @@ local function TriggerParry()
     end)
 end
 
--- Helper to find the active real ball in the match
 local function GetActiveBall()
     local ballsFolder = workspace:FindFirstChild("Balls")
     if not ballsFolder then return nil end
@@ -43,34 +40,34 @@ local function GetActiveBall()
 end
 
 MainTab:CreateToggle({
-    Name = "Auto Parry",
+    Name = "Ultra Auto Parry + Clash Mode",
     CurrentValue = false,
-    Flag = "AutoParryToggle",
+    Flag = "UltraParry",
     Callback = function(Value)
         autoParryEnabled = Value
         
         if autoParryEnabled then
-            -- Connect loop to frame updates for precise tracking
-            Connection = RunService.PreSimulation:Connect(function()
+            Connection = RunService.RenderStepped:Connect(function()
                 local character = Player.Character
                 local hrp = character and character:FindFirstChild("HumanoidRootPart")
                 local ball = GetActiveBall()
                 
                 if not hrp or not ball then return end
                 
-                -- Check if the ball's current target attribute matches local player
                 local targetAttr = ball:GetAttribute("target")
-                if targetAttr == Player.Name then
+                
+                -- Check if ball is targeting us OR if it's close enough for a clash check
+                if targetAttr == Player.Name or targetAttr == "Clash" then
                     local distance = (hrp.Position - ball.Position).Magnitude
-                    
-                    -- Fallback velocity tracking safely handle vector components
                     local velocity = ball.AssemblyLinearVelocity.Magnitude
                     if velocity < 1 then velocity = 1 end
                     
                     local timeToCollision = distance / velocity
                     
-                    -- Standard threshold trigger range
-                    if timeToCollision <= 0.65 then
+                    -- Dynamic threshold: If it's a clash, spam faster. If normal, use optimized timing.
+                    local threshold = (targetAttr == "Clash") and 1.2 or 0.68
+                    
+                    if timeToCollision <= threshold then
                         TriggerParry()
                     end
                 end
@@ -85,7 +82,7 @@ MainTab:CreateToggle({
 })
 
 Rayfield:Notify({
-    Title = "Onyx Hub Loaded!",
-    Content = "Auto-parry framework ready.",
+    Title = "Onyx Hub Updated",
+    Content = "Max accuracy & clash handler loaded.",
     Duration = 4,
 })
