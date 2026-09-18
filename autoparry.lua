@@ -2,6 +2,7 @@
     Blade Ball Auto Parry - Custom Build
     Detection: target attribute + zoomies.VectorVelocity
     Remote: ParryButtonPress
+    Notifications: on-screen instead of console
 --]]
 
 local Players = game:GetService("Players")
@@ -10,6 +11,7 @@ local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -58,6 +60,16 @@ local Parried = false
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
 local ParryButtonPress = Remotes:WaitForChild("ParryButtonPress", 9e9)
 
+local function Notify(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = duration or 2,
+        })
+    end)
+end
+
 local function GetBall()
     local ballsFolder = Workspace:FindFirstChild("Balls")
     if not ballsFolder then return nil end
@@ -90,7 +102,9 @@ local function ExecuteParry()
 
     pcall(function()
         ParryButtonPress:Fire()
-        if Config.Debug then print("[FAx] Parry fired") end
+        if Config.Debug then
+            Notify("Auto Parry", "Parry fired", 1)
+        end
     end)
 end
 
@@ -249,9 +263,9 @@ local function CreateGUI()
     return screenGui
 end
 
+Notify("Auto Parry", "Script loaded", 3)
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Detection: target attribute + zoomies.VectorVelocity")
 
 if Config.EnableGUI then CreateGUI() end
 StartParryLoop()
@@ -260,6 +274,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.K then
         Config.AutoParry = not Config.AutoParry
-        print("[FAx] Auto Parry: " .. (Config.AutoParry and "ON" or "OFF"))
+        Notify("Auto Parry", Config.AutoParry and "ON" or "OFF", 1)
     end
 end)
