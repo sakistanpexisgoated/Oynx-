@@ -1,7 +1,7 @@
 --[[
     Blade Ball Auto Parry - Final
-    Detection: Ball target attribute + Distance/Speed timing
-    Remote: ParryButtonPress (no virtual input, no kick)
+    Detection: target attribute + Distance/Speed timing
+    Remote: ParryButtonPress
 --]]
 
 local Players = game:GetService("Players")
@@ -103,7 +103,7 @@ end
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
 
-    -- Reset parried flag when a new ball spawns
+    -- Reset parried flag when target changes on a new ball
     Workspace.Balls.ChildAdded:Connect(function()
         local Ball = GetBall()
         if Ball then
@@ -116,20 +116,23 @@ local function StartParryLoop()
     parryConnection = RunService.PreSimulation:Connect(function()
         if not Config.AutoParry then return end
 
-        local ball = GetBall()
+        local Ball = GetBall()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not ball or not hrp then return end
+        if not Ball or not hrp then return end
 
-        local target = ball:GetAttribute("target")
+        local target = Ball:GetAttribute("target")
         if target ~= LocalPlayer.Name then return end
 
-        local distance = (hrp.Position - ball.Position).Magnitude
-        local speed = ball.AssemblyLinearVelocity.Magnitude
-        if speed < 1 then return end
+        local Zoomies = Ball:FindFirstChild("zoomies")
+        if not Zoomies then return end
 
-        local timeToReach = distance / speed
+        local Speed = Zoomies.VectorVelocity.Magnitude
+        if Speed < 1 then return end
 
-        if timeToReach <= Config.ParryWindow and timeToReach > 0 and not Parried then
+        local Distance = (hrp.Position - Ball.Position).Magnitude
+        local TimeToImpact = Distance / Speed
+
+        if TimeToImpact <= Config.ParryWindow and TimeToImpact > 0 and not Parried then
             ExecuteParry()
             Parried = true
         end
@@ -257,7 +260,7 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Detection: Ball target attribute")
+print("[FAx] Detection: target attribute + zoomies.VectorVelocity")
 
 if Config.EnableGUI then CreateGUI() end
 StartParryLoop()
