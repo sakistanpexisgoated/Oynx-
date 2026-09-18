@@ -13,60 +13,59 @@ local Window = Rayfield:CreateWindow({
         FolderName = "OnyxConfig",
         FileName = "BladeBall"
     },
-    KeySystem = false,
+    KeySystem = false, -- Set to true if you want a key system later
 })
 
 -- 2. Create Tabs
-local MainTab = Window:CreateTab("Main", 4483362458)
-local SettingsTab = Window:CreateTab("Settings", 4483345998)
+local MainTab = Window:CreateTab("Combat & Main", 4483362458)
+local VisualsTab = Window:CreateTab("Visuals", 4483362458)
 
--- 3. Feature Variables
-local HubSettings = {
-    AutoParry = false,
-    ParryDistance = 25,
-}
-
--- 4. Add Elements to the Main Tab
-MainTab:CreateSection("Combat Controls")
+-- 3. Add Elements to Main Tab
+MainTab:CreateSection("Auto Parry & Gameplay")
 
 MainTab:CreateToggle({
     Name = "Auto Parry",
     CurrentValue = false,
     Flag = "AutoParryToggle",
     Callback = function(Value)
-        HubSettings.AutoParry = Value
-        print("Auto Parry is now: " .. tostring(Value))
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Parry Distance Threshold",
-    Range = {10, 45},
-    Increment = 1,
-    Suffix = "studs",
-    CurrentValue = 25,
-    Flag = "DistanceSlider",
-    Callback = function(Value)
-        HubSettings.ParryDistance = Value
-        print("Distance set to: " .. Value)
-    end,
-})
-
-MainTab:CreateButton({
-    Name = "Instant Manual Parry",
-    Callback = function()
-        local char = game.Players.LocalPlayer.Character
-        if char then
-            local tool = char:FindFirstChildOfClass("Tool")
-            if tool then tool:Activate() end
+        if Value then
+            print("Auto Parry Enabled!")
+            -- Put your auto-parry activation code here
+        else
+            print("Auto Parry Disabled!")
+            -- Put your auto-parry deactivation code here
         end
     end,
 })
 
--- Notification to confirm load
+MainTab:CreateButton({
+    Name = "Spam Parry Test",
+    Callback = function()
+        print("Spam parry executed!")
+        -- Put manual/spam parry trigger code here
+    end,
+})
+
+-- 4. Add Elements to Visuals Tab
+VisualsTab:CreateSection("ESP & Settings")
+
+VisualsTab:CreateToggle({
+    Name = "Ball ESP",
+    CurrentValue = false,
+    Flag = "BallESP",
+    Callback = function(Value)
+        if Value then
+            print("Ball ESP Enabled")
+        else
+            print("Ball ESP Disabled")
+        end
+    end,
+})
+
+-- Notify that the script has loaded successfully
 Rayfield:Notify({
     Title = "Onyx Hub Loaded!",
-    Content = "Your custom mobile framework is ready.",
-    Duration = 4.5,
+    Content = "Successfully executed in Blade Ball.",
+    Duration = 4,
     Image = 4483362458,
 })
