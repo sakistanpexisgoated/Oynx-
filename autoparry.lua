@@ -1,6 +1,6 @@
 --[[
-    Blade Ball Auto Parry Script
-    Detection: red ball color + distance
+    Blade Ball Auto Parry
+    Detection: ball targets you (color/attribute)
     Remote: ParryButtonPress
 --]]
 
@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
 -- ========== PLATFORM ==========
 local Platform = "Unknown"
@@ -20,14 +21,10 @@ local IsDesktop = false
 
 pcall(function()
     local result = UserInputService:GetPlatform()
-    if result == Enum.Platform.Windows then
-        Platform = "Windows"; IsDesktop = true
-    elseif result == Enum.Platform.OSX then
-        Platform = "Mac"; IsDesktop = true
-    elseif result == Enum.Platform.IOS then
-        Platform = "iOS"; IsMobile = true
-    elseif result == Enum.Platform.Android then
-        Platform = "Android"; IsMobile = true
+    if result == Enum.Platform.Windows then Platform = "Windows"; IsDesktop = true
+    elseif result == Enum.Platform.OSX then Platform = "Mac"; IsDesktop = true
+    elseif result == Enum.Platform.IOS then Platform = "iOS"; IsMobile = true
+    elseif result == Enum.Platform.Android then Platform = "Android"; IsMobile = true
     end
 end)
 
@@ -42,17 +39,17 @@ end
 -- ========== CONFIG ==========
 local Config = {
     AutoParry = true,
-    ParryCooldown = 0.15,
-    PingOffset = 0.05,
+    ParryCooldown = 0.12,
+    PingOffset = 0.03,
     HumanizeDelay = true,
-    HumanizeMin = 0.05,
-    HumanizeMax = 0.15,
+    HumanizeMin = 0.03,
+    HumanizeMax = 0.10,
     EnableGUI = true,
     Debug = false,
 }
 
 local AntiKick = {
-    MaxParryPerSecond = 4,
+    MaxParryPerSecond = 6,
 }
 
 local parryConnection = nil
@@ -64,7 +61,7 @@ local lastResetTime = tick()
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
 local ParryButtonPress = Remotes:WaitForChild("ParryButtonPress", 9e9)
 
--- ========== GET BALL ==========
+-- ========== BALL ==========
 local function GetBall()
     local ballsFolder = Workspace:FindFirstChild("Balls")
     if not ballsFolder then return nil end
@@ -76,15 +73,27 @@ local function GetBall()
     return nil
 end
 
--- ========== CHECK IF BALL IS RED (targeting us) ==========
-local function IsBallRed(ball)
+-- ========== TARGET CHECK ==========
+local function IsBallTargetingUs(ball)
     if not ball then return false end
-    -- Ball targeting you becomes red [citation:8]
-    local color = ball.Color
-    return color.R > 0.7 and color.G < 0.3 and color.B < 0.3
+
+    -- Method 1: attribute check
+    local target = ball:GetAttribute("target")
+    if target == LocalPlayer.Name then return true end
+    if target == LocalPlayer.UserId then return true end
+
+    -- Method 2: ball color is red
+    local c = ball.Color
+    if c.R > 0.6 and c.G < 0.4 and c.B < 0.4 then return true end
+
+    -- Method 3: ball has a Highlight or selection
+    local hl = ball:FindFirstChild("Highlight")
+    if hl and hl.Enabled then return true end
+
+    return false
 end
 
--- ========== EXECUTE PARRY ==========
+-- ========== PARRY ==========
 local function ExecuteParry()
     if not Config.AutoParry then return end
     local now = tick()
@@ -106,13 +115,11 @@ local function ExecuteParry()
 
     pcall(function()
         ParryButtonPress:Fire()
-        if Config.Debug then
-            print("[FAx] Parry fired")
-        end
+        if Config.Debug then print("[FAx] Parry fired") end
     end)
 end
 
--- ========== MAIN LOOP ==========
+-- ========== LOOP ==========
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
     parryConnection = RunService.PreSimulation:Connect(function()
@@ -121,16 +128,14 @@ local function StartParryLoop()
         local ball = GetBall()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not ball or not hrp then return end
-
-        -- Only parry when ball is red (targeting us)
-        if not IsBallRed(ball) then return end
+        if not IsBallTargetingUs(ball) then return end
 
         local distance = (hrp.Position - ball.Position).Magnitude
         local velocity = ball.AssemblyLinearVelocity.Magnitude
         if velocity < 1 then return end
 
         local timeToReach = distance / velocity
-        local parryWindow = 0.55 + Config.PingOffset
+        local parryWindow = 0.6 + Config.PingOffset
 
         if timeToReach <= parryWindow and timeToReach > 0 then
             ExecuteParry()
@@ -145,15 +150,9 @@ local function CreateGUI()
     screenGui.Name = "R_" .. tostring(math.random(100000, 999999))
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-    if gethui then
-        pcall(function() screenGui.Parent = gethui() end)
-    end
-    if not screenGui.Parent then
-        pcall(function() screenGui.Parent = CoreGui end)
-    end
-    if not screenGui.Parent then
-        screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    end
+    if gethui then pcall(function() screenGui.Parent = gethui() end) end
+    if not screenGui.Parent then pcall(function() screenGui.Parent = CoreGui end) end
+    if not screenGui.Parent then screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
     local frameW = IsMobile and 300 or 280
     local frameH = IsMobile and 280 or 240
@@ -217,7 +216,7 @@ local function CreateGUI()
     status.Size = UDim2.new(0.9, 0, 0, 30)
     status.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 20)
     status.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
-    status.Text = "Detection: Red Ball | Ready"
+    status.Text = "Detection: Multi | Ready"
     status.TextColor3 = Color3.fromRGB(52, 211, 153)
     status.TextSize = IsMobile and 13 or 12
     status.Font = Enum.Font.Gotham
@@ -265,12 +264,8 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
-print("[FAx] Detection: Red Ball Color")
 
-if Config.EnableGUI then
-    CreateGUI()
-end
-
+if Config.EnableGUI then CreateGUI() end
 StartParryLoop()
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
