@@ -105,7 +105,7 @@ local function ExecuteParry()
     pcall(function()
         local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
         if remotes then
-            local parryRemote = remotes:FindFirstChild("Parry") or remotes:FindFirstChild("ParryButtonPress")
+            local parryRemote = remotes:FindFirstChild("ParryButtonPress")
             if parryRemote then
                 parryRemote:FireServer()
             end
