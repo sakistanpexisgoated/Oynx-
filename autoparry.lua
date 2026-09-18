@@ -1,7 +1,7 @@
 --[[
-    Blade Ball Auto Parry
-    Detection: ball targets you (color/attribute)
-    Remote: ParryButtonPress
+    Blade Ball Auto Parry - Final
+    Detection: Ball target attribute + Distance/Speed timing
+    Remote: ParryButtonPress (no virtual input, no kick)
 --]]
 
 local Players = game:GetService("Players")
@@ -12,7 +12,6 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
 
 -- ========== PLATFORM ==========
 local Platform = "Unknown"
@@ -39,8 +38,8 @@ end
 -- ========== CONFIG ==========
 local Config = {
     AutoParry = true,
+    ParryWindow = 0.55,       -- Distance/Speed threshold. Increase if high ping.
     ParryCooldown = 0.12,
-    PingOffset = 0.03,
     HumanizeDelay = true,
     HumanizeMin = 0.03,
     HumanizeMax = 0.10,
@@ -56,6 +55,7 @@ local parryConnection = nil
 local lastParryTime = 0
 local parryCount = 0
 local lastResetTime = tick()
+local Parried = false
 
 -- ========== REMOTE ==========
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
@@ -71,26 +71,6 @@ local function GetBall()
         end
     end
     return nil
-end
-
--- ========== TARGET CHECK ==========
-local function IsBallTargetingUs(ball)
-    if not ball then return false end
-
-    -- Method 1: attribute check
-    local target = ball:GetAttribute("target")
-    if target == LocalPlayer.Name then return true end
-    if target == LocalPlayer.UserId then return true end
-
-    -- Method 2: ball color is red
-    local c = ball.Color
-    if c.R > 0.6 and c.G < 0.4 and c.B < 0.4 then return true end
-
-    -- Method 3: ball has a Highlight or selection
-    local hl = ball:FindFirstChild("Highlight")
-    if hl and hl.Enabled then return true end
-
-    return false
 end
 
 -- ========== PARRY ==========
@@ -122,23 +102,36 @@ end
 -- ========== LOOP ==========
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
+
+    -- Reset parried flag when a new ball spawns
+    Workspace.Balls.ChildAdded:Connect(function()
+        local Ball = GetBall()
+        if Ball then
+            Ball:GetAttributeChangedSignal("target"):Connect(function()
+                Parried = false
+            end)
+        end
+    end)
+
     parryConnection = RunService.PreSimulation:Connect(function()
         if not Config.AutoParry then return end
 
         local ball = GetBall()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not ball or not hrp then return end
-        if not IsBallTargetingUs(ball) then return end
+
+        local target = ball:GetAttribute("target")
+        if target ~= LocalPlayer.Name then return end
 
         local distance = (hrp.Position - ball.Position).Magnitude
-        local velocity = ball.AssemblyLinearVelocity.Magnitude
-        if velocity < 1 then return end
+        local speed = ball.AssemblyLinearVelocity.Magnitude
+        if speed < 1 then return end
 
-        local timeToReach = distance / velocity
-        local parryWindow = 0.6 + Config.PingOffset
+        local timeToReach = distance / speed
 
-        if timeToReach <= parryWindow and timeToReach > 0 then
+        if timeToReach <= Config.ParryWindow and timeToReach > 0 and not Parried then
             ExecuteParry()
+            Parried = true
         end
     end)
 end
@@ -155,7 +148,7 @@ local function CreateGUI()
     if not screenGui.Parent then screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
     local frameW = IsMobile and 300 or 280
-    local frameH = IsMobile and 280 or 240
+    local frameH = IsMobile and 260 or 220
     local btnH = IsMobile and 50 or 40
 
     local mainFrame = Instance.new("Frame")
@@ -216,7 +209,7 @@ local function CreateGUI()
     status.Size = UDim2.new(0.9, 0, 0, 30)
     status.Position = UDim2.new(0.05, 0, 0, 60 + btnH + 20)
     status.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
-    status.Text = "Detection: Multi | Ready"
+    status.Text = "Target Attr | Window: " .. Config.ParryWindow
     status.TextColor3 = Color3.fromRGB(52, 211, 153)
     status.TextSize = IsMobile and 13 or 12
     status.Font = Enum.Font.Gotham
@@ -264,6 +257,7 @@ end
 -- ========== START ==========
 print("[FAx] Blade Ball Auto Parry loaded")
 print("[FAx] Platform: " .. Platform)
+print("[FAx] Detection: Ball target attribute")
 
 if Config.EnableGUI then CreateGUI() end
 StartParryLoop()
