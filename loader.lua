@@ -1,71 +1,91 @@
--- Onyx Hub: Custom Mobile Framework
--- Powered by Rayfield UI Library
-
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- 1. Create the Main Window
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Player = Players.LocalPlayer
+
 local Window = Rayfield:CreateWindow({
     Name = "Onyx Hub | Blade Ball",
     LoadingTitle = "Onyx Framework Initializing...",
     LoadingSubtitle = "by You",
-    ConfigurationSaving = {
-        Enabled = false,
-        FolderName = "OnyxConfig",
-        FileName = "BladeBall"
-    },
-    KeySystem = false, -- Set to true if you want a key system later
+    ConfigurationSaving = { Enabled = false }
 })
 
--- 2. Create Tabs
 local MainTab = Window:CreateTab("Combat & Main", 4483362458)
-local VisualsTab = Window:CreateTab("Visuals", 4483362458)
+MainTab:CreateSection("Auto Parry")
 
--- 3. Add Elements to Main Tab
-MainTab:CreateSection("Auto Parry & Gameplay")
+-- Reference variables
+local autoParryEnabled = false
+local Connection
+
+-- Helper function to fire the parry remote safely
+local function TriggerParry()
+    local success = pcall(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes and remotes:FindFirstChild("ParryButtonPress") then
+            remotes.ParryButtonPress:Fire()
+        end
+    end)
+end
+
+-- Helper to find the active real ball in the match
+local function GetActiveBall()
+    local ballsFolder = workspace:FindFirstChild("Balls")
+    if not ballsFolder then return nil end
+    
+    for _, ball in ipairs(ballsFolder:GetChildren()) do
+        if ball:GetAttribute("realBall") == true then
+            return ball
+        end
+    end
+    return nil
+end
 
 MainTab:CreateToggle({
     Name = "Auto Parry",
     CurrentValue = false,
     Flag = "AutoParryToggle",
     Callback = function(Value)
-        if Value then
-            print("Auto Parry Enabled!")
-            -- Put your auto-parry activation code here
+        autoParryEnabled = Value
+        
+        if autoParryEnabled then
+            -- Connect loop to frame updates for precise tracking
+            Connection = RunService.PreSimulation:Connect(function()
+                local character = Player.Character
+                local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                local ball = GetActiveBall()
+                
+                if not hrp or not ball then return end
+                
+                -- Check if the ball's current target attribute matches local player
+                local targetAttr = ball:GetAttribute("target")
+                if targetAttr == Player.Name then
+                    local distance = (hrp.Position - ball.Position).Magnitude
+                    
+                    -- Fallback velocity tracking safely handle vector components
+                    local velocity = ball.AssemblyLinearVelocity.Magnitude
+                    if velocity < 1 then velocity = 1 end
+                    
+                    local timeToCollision = distance / velocity
+                    
+                    -- Standard threshold trigger range
+                    if timeToCollision <= 0.65 then
+                        TriggerParry()
+                    end
+                end
+            end)
         else
-            print("Auto Parry Disabled!")
-            -- Put your auto-parry deactivation code here
+            if Connection then
+                Connection:Disconnect()
+                Connection = nil
+            end
         end
     end,
 })
 
-MainTab:CreateButton({
-    Name = "Spam Parry Test",
-    Callback = function()
-        print("Spam parry executed!")
-        -- Put manual/spam parry trigger code here
-    end,
-})
-
--- 4. Add Elements to Visuals Tab
-VisualsTab:CreateSection("ESP & Settings")
-
-VisualsTab:CreateToggle({
-    Name = "Ball ESP",
-    CurrentValue = false,
-    Flag = "BallESP",
-    Callback = function(Value)
-        if Value then
-            print("Ball ESP Enabled")
-        else
-            print("Ball ESP Disabled")
-        end
-    end,
-})
-
--- Notify that the script has loaded successfully
 Rayfield:Notify({
     Title = "Onyx Hub Loaded!",
-    Content = "Successfully executed in Blade Ball.",
+    Content = "Auto-parry framework ready.",
     Duration = 4,
-    Image = 4483362458,
 })
