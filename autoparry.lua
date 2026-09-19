@@ -1658,13 +1658,21 @@ local function CreateUI()
 end
 
 -- ========== START ==========
+local function safeNotify(t, x, d)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {Title = t, Text = x, Duration = d or 2})
+    end)
+end
+
+safeNotify("Oynx", "Reached START block", 2)
+
 if Config.EnableGUI then
     local ok, err = pcall(CreateUI)
     if not ok then
-        warn("[Oynx] CreateUI failed: " .. tostring(err))
-        Notify("Oynx Hub", "GUI failed: " .. tostring(err), 5)
+        warn("[Oynx] CreateUI error: " .. tostring(err))
+        safeNotify("Oynx Error", tostring(err), 8)
     else
-        Notify("Oynx Hub", "Oynx Hub Loaded (We would rather you use your alt account).", 3)
+        safeNotify("Oynx Hub", "Oynx Hub Loaded", 3)
     end
 end
 
