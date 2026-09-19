@@ -23,6 +23,15 @@ local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
+-- Startup test notification — remove once confirmed working
+pcall(function()
+    StarterGui:SetCore("SendNotification", {
+        Title = "Oynx Hub",
+        Text = "Script started",
+        Duration = 3,
+    })
+end)
+
 -- ========== PLATFORM ==========
 local Platform = "Unknown"
 local IsMobile = false
@@ -111,7 +120,6 @@ local ADMIN_KEYWORDS = {
 }
 
 -- ========== TRADE VALUES ==========
--- Extend this. Exact name match. Higher = more valuable.
 local TradeValues = {
     ["Default Sword"] = 0,
     ["Wooden Sword"] = 0,
@@ -231,6 +239,7 @@ local function LoadConfig()
 end
 
 LoadConfig()
+Config.EnableGUI = true  -- force GUI on every load
 
 -- ========== JOB SAVE / REJOIN ==========
 local function SaveCurrentJob()
@@ -827,9 +836,17 @@ local function CreateUI()
     screenGui.Name = "R_" .. tostring(math.random(100000, 999999))
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.IgnoreGuiInset = true
-    if gethui then pcall(function() screenGui.Parent = gethui() end) end
-    if not screenGui.Parent then pcall(function() screenGui.Parent = CoreGui end) end
-    if not screenGui.Parent then screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local parented = false
+    if gethui then
+        parented = pcall(function() screenGui.Parent = gethui() end)
+    end
+    if not parented then
+        parented = pcall(function() screenGui.Parent = CoreGui end)
+    end
+    if not parented then
+        pcall(function() screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui", 5) end)
+    end
 
     local COL_BG = Config.ThemeColor
     local COL_PANEL = Config.ThemeColor:Lerp(Color3.fromRGB(255, 255, 255), 0.05)
@@ -1641,9 +1658,16 @@ local function CreateUI()
 end
 
 -- ========== START ==========
-Notify("Oynx Hub", "Oynx Hub Loaded (We would rather you use your alt account).", 3)
+if Config.EnableGUI then
+    local ok, err = pcall(CreateUI)
+    if not ok then
+        warn("[Oynx] CreateUI failed: " .. tostring(err))
+        Notify("Oynx Hub", "GUI failed: " .. tostring(err), 5)
+    else
+        Notify("Oynx Hub", "Oynx Hub Loaded (We would rather you use your alt account).", 3)
+    end
+end
 
-if Config.EnableGUI then CreateUI() end
 StartParryLoop()
 StartClashLoop()
 StartParryChains()
