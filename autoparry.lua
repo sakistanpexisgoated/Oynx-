@@ -51,7 +51,7 @@ local Config = {
     HumanizeMin = 0.03,
     HumanizeMax = 0.10,
     EnableGUI = true,
-    Debug = false,
+    Debug = true,
 }
 
 local AntiKick = {
