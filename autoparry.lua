@@ -5,7 +5,7 @@
               Auto Dodge, Parry Chains, Auto Forcefield, Sword Giver, Visuals,
               Ball ESP, Target ESP, Trajectory Line, Ball Trail, Speedometer,
               Player Names ESP, Auto Rejoin, Server Region, Anti-AFK, Config Save/Load,
-              Admin Detector, RGB Color Picker
+              Admin Detector, RGB Color Picker, Trade W/L Tracker, Rejoin Last Server
 --]]
 
 local Players = game:GetService("Players")
@@ -49,7 +49,6 @@ local HAS_FS = (writefile and readfile and isfile) ~= nil
 
 -- ========== CONFIG ==========
 local Config = {
-    -- Combat
     AutoParry = true,
     AutoClash = true,
     AutoSpam = false,
@@ -66,7 +65,6 @@ local Config = {
     HumanizeMin = 0.03,
     HumanizeMax = 0.10,
     DodgeDistance = 20,
-    -- Visual
     BallESP = false,
     TargetESP = false,
     TrajectoryLine = false,
@@ -75,56 +73,93 @@ local Config = {
     PlayerNamesESP = false,
     SwordGiver = false,
     Visuals = false,
-    -- Utility
     AutoRejoin = false,
     ServerRegion = false,
     AntiAFK = false,
     DiscordRPC = false,
     AdminDetector = false,
-    -- General
+    TradeTracker = false,
     EnableGUI = true,
     Debug = false,
     ThemeColor = Color3.fromRGB(14, 14, 16),
 }
 
-local AntiKick = {
-    MaxParryPerSecond = 6,
-}
+local AntiKick = { MaxParryPerSecond = 6 }
 
-local parryConnection = nil
-local clashConnection = nil
-local spamConnection = nil
-local espConnection = nil
-local adminConnection = nil
-local predictorConnection = nil
-local abilityConnection = nil
-local dodgeConnection = nil
-local trailConnection = nil
-local speedoConnection = nil
-local nameEspConnection = nil
-local afkConnection = nil
-local rejoinConnection = nil
-
+local parryConnection, clashConnection, spamConnection, espConnection
+local adminConnection, predictorConnection, abilityConnection, dodgeConnection
+local trailConnection, speedoConnection, nameEspConnection, afkConnection, rejoinConnection
+local tradeConnection = nil
 local lastParryTime = 0
 local parryCount = 0
 local lastResetTime = tick()
 local lastAbilityCheck = 0
 local lastDodgeTime = 0
 local Parried = false
-local espFolder = nil
-local trailFolder = nil
-local speedoGui = nil
-local nameEspFolder = nil
+local espFolder, trailFolder, speedoGui, nameEspFolder = nil, nil, nil, nil
 local uiRefs = {}
 local knownAdmins = {}
 local lastAbilityState = {}
+local lastTradeHash = ""
 
 local CONFIG_FILE = "oynx_hub_config.json"
+local JOBS_FILE = "oynx_last_job.txt"
 
 local ADMIN_KEYWORDS = {
     "admin", "mod", "moderator", "owner", "staff", "dev", "developer",
     "manager", "supervisor", "gm", "game master",
 }
+
+-- ========== TRADE VALUES ==========
+-- Extend this. Exact name match. Higher = more valuable.
+local TradeValues = {
+    ["Default Sword"] = 0,
+    ["Wooden Sword"] = 0,
+    ["Basic Sword"] = 0,
+    ["Candy Cane"] = 5,
+    ["Ice Dagger"] = 8,
+    ["Frostbite"] = 10,
+    ["Snowflake"] = 12,
+    ["Mythril"] = 15,
+    ["Ninja"] = 18,
+    ["Yin Yang"] = 20,
+    ["Shadow"] = 22,
+    ["Dragon"] = 25,
+    ["Crystal"] = 28,
+    ["Radiant"] = 30,
+    ["Raven"] = 32,
+    ["Eclipse"] = 35,
+    ["Divine"] = 40,
+    ["Void"] = 45,
+    ["Godly"] = 50,
+    ["Reaper"] = 55,
+    ["Phantom"] = 60,
+    ["Celestial"] = 65,
+    ["Abyssal"] = 70,
+    ["Infinity"] = 80,
+    ["Genesis"] = 90,
+    ["Chronos"] = 100,
+    ["Omega"] = 110,
+    ["Annihilation"] = 120,
+    ["The Best Sword"] = 999,
+}
+
+local TradeStats = {
+    Wins = 0, Losses = 0, Even = 0, Unknown = 0,
+    LastResult = "—",
+}
+
+local function GetTradeValue(itemName)
+    if not itemName then return nil end
+    if TradeValues[itemName] then return TradeValues[itemName] end
+    local lower = string.lower(itemName)
+    for name, val in pairs(TradeValues) do
+        if string.find(lower, string.lower(name), 1, true) then
+            return val
+        end
+    end
+    return nil
+end
 
 -- ========== REMOTES ==========
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 9e9)
@@ -135,9 +170,7 @@ local Abilities = Remotes:FindFirstChild("Abilities")
 local function Notify(title, text, duration)
     pcall(function()
         StarterGui:SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = duration or 2,
+            Title = title, Text = text, Duration = duration or 2,
         })
     end)
 end
@@ -159,33 +192,17 @@ local function GetHRP()
     return nil
 end
 
-local function HSVtoRGB(h, s, v)
-    return Color3.fromHSV(h / 360, s / 100, v / 100)
-end
+local function HSVtoRGB(h, s, v) return Color3.fromHSV(h/360, s/100, v/100) end
+local function RGBtoHSV(c) local h,s,v = Color3.toHSV(c) return h*360, s*100, v*100 end
+local function RGBtoHEX(c) return string.format("#%02X%02X%02X",
+    math.floor(c.R*255+0.5), math.floor(c.G*255+0.5), math.floor(c.B*255+0.5)) end
 
-local function RGBtoHSV(c)
-    local h, s, v = Color3.toHSV(c)
-    return h * 360, s * 100, v * 100
-end
-
-local function RGBtoHEX(c)
-    return string.format("#%02X%02X%02X",
-        math.floor(c.R * 255 + 0.5),
-        math.floor(c.G * 255 + 0.5),
-        math.floor(c.B * 255 + 0.5))
-end
-
-local function FireParry()
-    pcall(function() ParryButtonPress:Fire() end)
-end
+local function FireParry() pcall(function() ParryButtonPress:Fire() end) end
 
 -- ========== CONFIG SAVE / LOAD ==========
 local function SaveConfig()
-    if not HAS_FS then
-        if Config.Debug then print("[Oynx] No filesystem support — config not saved") end
-        return
-    end
-    local ok, err = pcall(function()
+    if not HAS_FS then return end
+    pcall(function()
         local data = {}
         for k, v in pairs(Config) do
             if typeof(v) == "Color3" then
@@ -196,7 +213,6 @@ local function SaveConfig()
         end
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
     end)
-    if not ok and Config.Debug then print("[Oynx] Save failed:", err) end
 end
 
 local function LoadConfig()
@@ -216,15 +232,42 @@ end
 
 LoadConfig()
 
+-- ========== JOB SAVE / REJOIN ==========
+local function SaveCurrentJob()
+    if not HAS_FS then return end
+    pcall(function()
+        writefile(JOBS_FILE, game.JobId .. "\n" .. tostring(game.PlaceId))
+    end)
+end
+
+local function RejoinLastServer()
+    if not HAS_FS then
+        Notify("Oynx Hub", "Filesystem not supported by executor", 3)
+        return
+    end
+    pcall(function()
+        if not isfile(JOBS_FILE) then
+            Notify("Oynx Hub", "No saved server", 2)
+            return
+        end
+        local content = readfile(JOBS_FILE)
+        local jobId, placeId = string.match(content, "([^\n]+)\n([^\n]+)")
+        if not jobId or jobId == "" then
+            Notify("Oynx Hub", "Saved server invalid", 2)
+            return
+        end
+        Notify("Oynx Hub", "Rejoining last server...", 2)
+        task.wait(1)
+        TeleportService:TeleportToPlaceInstance(tonumber(placeId) or game.PlaceId, jobId, LocalPlayer)
+    end)
+end
+
 -- ========== PARRY ==========
 local function ExecuteParry()
     if not Config.AutoParry then return end
     local now = tick()
     if now - lastParryTime < Config.ParryCooldown then return end
-    if now - lastResetTime > 1 then
-        parryCount = 0
-        lastResetTime = now
-    end
+    if now - lastResetTime > 1 then parryCount = 0; lastResetTime = now end
     if parryCount >= AntiKick.MaxParryPerSecond then return end
     lastParryTime = now
     parryCount = parryCount + 1
@@ -239,11 +282,9 @@ end
 -- ========== CLASH ==========
 local function ExecuteClash()
     if not Config.AutoClash then return end
-    local ball = GetBall()
-    local hrp = GetHRP()
+    local ball, hrp = GetBall(), GetHRP()
     if not ball or not hrp then return end
-    local distance = (hrp.Position - ball.Position).Magnitude
-    if distance <= Config.ClashDistance then
+    if (hrp.Position - ball.Position).Magnitude <= Config.ClashDistance then
         FireParry()
     end
 end
@@ -260,33 +301,26 @@ local function StartSpam()
 end
 
 -- ========== CLASH PREDICTOR ==========
--- Watches ball velocity vector per frame and fires 1-2 frames before impact
 local function StartClashPredictor()
     if predictorConnection then predictorConnection:Disconnect() end
     if not Config.ClashPredictor then return end
     local lastPositions = {}
     predictorConnection = RunService.PreSimulation:Connect(function()
         if not Config.ClashPredictor then return end
-        local ball = GetBall()
-        local hrp = GetHRP()
+        local ball, hrp = GetBall(), GetHRP()
         if not ball or not hrp then return end
-        local ballId = ball:GetDebugId()
-        local lastPos = lastPositions[ballId]
-        local currentPos = ball.Position
-        lastPositions[ballId] = currentPos
+        local id = ball:GetDebugId()
+        local lastPos = lastPositions[id]
+        local curPos = ball.Position
+        lastPositions[id] = curPos
         if not lastPos then return end
-        -- Predict next position from velocity delta
-        local delta = currentPos - lastPos
-        local predictedNext = currentPos + delta
-        local distToMe = (hrp.Position - currentPos).Magnitude
-        local predictedDistToMe = (hrp.Position - predictedNext).Magnitude
-        -- If predicted next frame brings ball closer by significant amount and we're near
-        if distToMe < 25 and predictedDistToMe < distToMe and (distToMe - predictedDistToMe) > 0.5 then
-            local approaching = (hrp.Position - currentPos).Unit
-            local moving = delta.Unit
-            if approaching:Dot(moving) > 0.7 then
-                FireParry()
-            end
+        local delta = curPos - lastPos
+        local predicted = curPos + delta
+        local distNow = (hrp.Position - curPos).Magnitude
+        local distNext = (hrp.Position - predicted).Magnitude
+        if distNow < 25 and distNext < distNow and (distNow - distNext) > 0.5 then
+            local approach = (hrp.Position - curPos).Unit
+            if approach:Dot(delta.Unit) > 0.7 then FireParry() end
         end
     end)
 end
@@ -304,7 +338,6 @@ local function StartAutoAbility()
             if Abilities then
                 for _, remote in ipairs(Abilities:GetChildren()) do
                     if remote:IsA("RemoteEvent") then
-                        -- fire each ability remote when off cooldown
                         local key = remote.Name
                         if not lastAbilityState[key] or now - lastAbilityState[key] > 5 then
                             remote:FireServer()
@@ -323,8 +356,7 @@ local function StartAutoDodge()
     if not Config.AutoDodge then return end
     dodgeConnection = RunService.Heartbeat:Connect(function()
         if not Config.AutoDodge then return end
-        local ball = GetBall()
-        local hrp = GetHRP()
+        local ball, hrp = GetBall(), GetHRP()
         if not ball or not hrp then return end
         if ball:GetAttribute("target") ~= LocalPlayer.Name then return end
         local dist = (hrp.Position - ball.Position).Magnitude
@@ -332,32 +364,26 @@ local function StartAutoDodge()
             local now = tick()
             if now - lastDodgeTime < 0.3 then return end
             lastDodgeTime = now
-            -- side-step strafe
             local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then
                 local side = math.random() > 0.5 and 1 or -1
                 local perp = (hrp.CFrame.RightVector * side).Unit
-                local targetPos = hrp.Position + perp * 12
-                pcall(function()
-                    humanoid:MoveTo(targetPos)
-                end)
+                pcall(function() humanoid:MoveTo(hrp.Position + perp * 12) end)
             end
         end
     end)
 end
 
 -- ========== PARRY CHAINS ==========
--- Detects multiple balls targeting and queues successive parries
-local queuedParries = 0
-local lastChainFire = 0
 local function StartParryChains()
+    local lastChainFire = 0
     RunService.PreSimulation:Connect(function()
         if not Config.ParryChains then return end
         local ballsFolder = Workspace:FindFirstChild("Balls")
         if not ballsFolder then return end
         local targeting = 0
-        for _, ball in ipairs(ballsFolder:GetChildren()) do
-            if ball:IsA("BasePart") and ball:GetAttribute("target") == LocalPlayer.Name then
+        for _, b in ipairs(ballsFolder:GetChildren()) do
+            if b:IsA("BasePart") and b:GetAttribute("target") == LocalPlayer.Name then
                 targeting = targeting + 1
             end
         end
@@ -380,8 +406,7 @@ local function StartAutoForcefield()
         if ball:GetAttribute("target") ~= LocalPlayer.Name then return end
         local hrp = GetHRP()
         if not hrp then return end
-        local dist = (hrp.Position - ball.Position).Magnitude
-        if dist < 30 then
+        if (hrp.Position - ball.Position).Magnitude < 30 then
             pcall(function()
                 if Abilities then
                     local ff = Abilities:FindFirstChild("Forcefield") or Abilities:FindFirstChild("ForceField")
@@ -415,8 +440,8 @@ local function ApplyVisuals()
     local head = char:FindFirstChild("Head")
     if head then
         head.Transparency = 1
-        for _, child in ipairs(head:GetChildren()) do
-            if child:IsA("Decal") then child.Transparency = 1 end
+        for _, c in ipairs(head:GetChildren()) do
+            if c:IsA("Decal") then c.Transparency = 1 end
         end
     end
     pcall(function()
@@ -454,16 +479,88 @@ local function StartAdminWatch()
     end)
 end
 
+-- ========== TRADE W/L TRACKER ==========
+local function GetTradeItems()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return nil, nil end
+
+    local function scan(root)
+        local items = {}
+        if not root then return items end
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text and #d.Text > 0 then
+                local lower = string.lower(d.Text)
+                if string.find(lower, "sword") or string.find(lower, "blade")
+                   or string.find(lower, "dagger") or string.find(lower, "scythe") then
+                    table.insert(items, d.Text)
+                end
+            end
+        end
+        return items
+    end
+
+    local tradeGui = playerGui:FindFirstChild("Trade") or playerGui:FindFirstChild("TradeGui")
+    if not tradeGui then return nil, nil end
+
+    local theirSide = tradeGui:FindFirstChild("TheirOffer") or tradeGui:FindFirstChild("Other")
+    local mySide = tradeGui:FindFirstChild("MyOffer") or tradeGui:FindFirstChild("Mine")
+
+    return scan(mySide), scan(theirSide)
+end
+
+local function EvaluateTrade()
+    if not Config.TradeTracker then return nil end
+    local myItems, theirItems = GetTradeItems()
+    if not myItems or not theirItems then return nil end
+    if #myItems == 0 and #theirItems == 0 then return nil end
+
+    local hash = table.concat(myItems, ",") .. "|" .. table.concat(theirItems, ",")
+    if hash == lastTradeHash then return nil end
+    lastTradeHash = hash
+
+    local myVal, theirVal = 0, 0
+    local unknown = false
+
+    for _, n in ipairs(myItems) do
+        local v = GetTradeValue(n)
+        if v then myVal = myVal + v else unknown = true end
+    end
+    for _, n in ipairs(theirItems) do
+        local v = GetTradeValue(n)
+        if v then theirVal = theirVal + v else unknown = true end
+    end
+
+    local result
+    if unknown and myVal == 0 and theirVal == 0 then result = "unknown"
+    elseif theirVal > myVal then result = "win"
+    elseif theirVal < myVal then result = "loss"
+    else result = "even" end
+
+    if result == "win" then TradeStats.Wins = TradeStats.Wins + 1
+    elseif result == "loss" then TradeStats.Losses = TradeStats.Losses + 1
+    elseif result == "even" then TradeStats.Even = TradeStats.Even + 1
+    else TradeStats.Unknown = TradeStats.Unknown + 1 end
+
+    TradeStats.LastResult = result:upper()
+    Notify("Oynx Hub", "Trade: " .. result:upper() .. " (you " .. myVal .. " / them " .. theirVal .. ")", 4)
+    return result
+end
+
+local function StartTradeTracker()
+    if tradeConnection then tradeConnection:Disconnect() end
+    tradeConnection = RunService.Heartbeat:Connect(function()
+        pcall(EvaluateTrade)
+    end)
+end
+
 -- ========== ESP ==========
 local function StartESP()
     if espConnection then espConnection:Disconnect() end
     if espFolder then espFolder:Destroy() end
     if not (Config.BallESP or Config.TargetESP) then return end
-
     espFolder = Instance.new("Folder")
     espFolder.Name = "OynxHubESP"
     espFolder.Parent = Workspace
-
     espConnection = RunService.RenderStepped:Connect(function()
         for _, obj in ipairs(espFolder:GetChildren()) do obj:Destroy() end
         if Config.BallESP then
@@ -503,30 +600,24 @@ local function StartTrajectoryLine()
     if trailConnection then trailConnection:Disconnect() end
     if trailFolder then trailFolder:Destroy() end
     if not Config.TrajectoryLine then return end
-
     trailFolder = Instance.new("Folder")
     trailFolder.Name = "OynxTrajectory"
     trailFolder.Parent = Workspace
-
     trailConnection = RunService.RenderStepped:Connect(function()
         for _, obj in ipairs(trailFolder:GetChildren()) do obj:Destroy() end
         local ball = GetBall()
-        local hrp = GetHRP()
-        if not ball or not hrp then return end
-        local ballPos = ball.Position
+        if not ball then return end
         local velocity = ball.AssemblyLinearVelocity
         if velocity.Magnitude < 1 then return end
-        -- draw line for next 2 seconds of travel
-        local futurePos = ballPos + velocity * 2
-        local fromTo = futurePos - ballPos
-        local distance = fromTo.Magnitude
-        local midpoint = ballPos + fromTo / 2
+        local from = ball.Position
+        local to = from + velocity * 2
+        local mid = from + (to - from) / 2
         local part = Instance.new("Part")
         part.Anchored = true
         part.CanCollide = false
         part.Material = Enum.Material.Neon
-        part.Size = Vector3.new(0.2, 0.2, distance)
-        part.CFrame = CFrame.lookAt(midpoint, futurePos)
+        part.Size = Vector3.new(0.2, 0.2, (to - from).Magnitude)
+        part.CFrame = CFrame.lookAt(mid, to)
         part.Color = Color3.fromRGB(255, 100, 100)
         part.Transparency = 0.5
         part.Parent = trailFolder
@@ -534,24 +625,19 @@ local function StartTrajectoryLine()
 end
 
 -- ========== BALL TRAIL ==========
-local ballPath = {}
 local function StartBallTrail()
+    local ballPath = {}
     RunService.Heartbeat:Connect(function()
-        if not Config.BallTrail then
-            ballPath = {}
-            return
-        end
+        if not Config.BallTrail then ballPath = {} return end
         local ball = GetBall()
         if not ball then ballPath = {} return end
         table.insert(ballPath, {pos = ball.Position, time = tick()})
-        -- keep last 2 seconds
         local now = tick()
         local filtered = {}
         for _, p in ipairs(ballPath) do
             if now - p.time < 2 then table.insert(filtered, p) end
         end
         ballPath = filtered
-        -- render segments
         if trailFolder and #ballPath > 1 then
             for i = 2, #ballPath do
                 local a, b = ballPath[i-1].pos, ballPath[i].pos
@@ -563,7 +649,7 @@ local function StartBallTrail()
                 seg.CFrame = CFrame.lookAt((a + b) / 2, b)
                 seg.Color = Color3.fromRGB(255, 200, 50)
                 seg.Transparency = 0.6
-                seg.Parent = trailFolder
+                seg.Parent = trailFolder or Workspace
                 game:GetService("Debris"):AddItem(seg, 0.3)
             end
         end
@@ -607,8 +693,7 @@ local function StartSpeedometer()
 
     speedoConnection = RunService.Heartbeat:Connect(function()
         if not Config.Speedometer then return end
-        local ball = GetBall()
-        local hrp = GetHRP()
+        local ball, hrp = GetBall(), GetHRP()
         if not ball or not hrp then
             lbl.Text = "Speed: —\nDistance: —\nETA: —"
             return
@@ -625,11 +710,9 @@ local function StartPlayerNamesESP()
     if nameEspConnection then nameEspConnection:Disconnect() end
     if nameEspFolder then nameEspFolder:Destroy() end
     if not Config.PlayerNamesESP then return end
-
     nameEspFolder = Instance.new("Folder")
     nameEspFolder.Name = "OynxNames"
     nameEspFolder.Parent = Workspace
-
     nameEspConnection = RunService.RenderStepped:Connect(function()
         for _, obj in ipairs(nameEspFolder:GetChildren()) do obj:Destroy() end
         for _, player in ipairs(Players:GetPlayers()) do
@@ -642,7 +725,6 @@ local function StartPlayerNamesESP()
                     bb.StudsOffset = Vector3.new(0, 3, 0)
                     bb.AlwaysOnTop = true
                     bb.Parent = nameEspFolder
-
                     local nameLbl = Instance.new("TextLabel")
                     nameLbl.Size = UDim2.new(1, 0, 1, 0)
                     nameLbl.BackgroundTransparency = 1
@@ -671,23 +753,11 @@ local function StartAutoRejoin()
 end
 
 -- ========== SERVER REGION ==========
--- Find lowest-ping server region
-local function SortServersByPing(servers)
-    local scored = {}
-    for _, srv in ipairs(servers) do
-        table.insert(scored, {server = srv, ping = srv.Ping or 999})
-    end
-    table.sort(scored, function(a, b) return a.ping < b.ping end)
-    return scored
-end
-
 local function StartServerRegion()
     RunService.Heartbeat:Connect(function()
         if not Config.ServerRegion then return end
         pcall(function()
-            local pages = game:GetService("Players"):GetPlayers()
-            -- best-effort: if a low-ping server exists, jump
-            -- TeleportService:TeleportToPlaceInstance(placeId, jobId, player)
+            -- stub: real region-hopping requires external API
         end)
     end)
 end
@@ -710,12 +780,11 @@ end
 local function StartDiscordRPC()
     if not Config.DiscordRPC then return end
     pcall(function()
-        -- some executors expose a setdiscordrp or similar; log intent otherwise
-        print("[Oynx] Discord RPC requested. Set game to: Blade Ball — Oynx Hub")
+        print("[Oynx] Discord RPC requested: Blade Ball — Oynx Hub")
     end)
 end
 
--- ========== LOOPS ==========
+-- ========== MAIN LOOPS ==========
 local function StartParryLoop()
     if parryConnection then parryConnection:Disconnect() end
     Workspace.Balls.ChildAdded:Connect(function()
@@ -728,8 +797,7 @@ local function StartParryLoop()
     end)
     parryConnection = RunService.PreSimulation:Connect(function()
         if not Config.AutoParry then return end
-        local Ball = GetBall()
-        local hrp = GetHRP()
+        local Ball, hrp = GetBall(), GetHRP()
         if not Ball or not hrp then return end
         if Ball:GetAttribute("target") ~= LocalPlayer.Name then return end
         local Zoomies = Ball:FindFirstChild("zoomies")
@@ -759,7 +827,6 @@ local function CreateUI()
     screenGui.Name = "R_" .. tostring(math.random(100000, 999999))
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.IgnoreGuiInset = true
-
     if gethui then pcall(function() screenGui.Parent = gethui() end) end
     if not screenGui.Parent then pcall(function() screenGui.Parent = CoreGui end) end
     if not screenGui.Parent then screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
@@ -925,10 +992,7 @@ local function CreateUI()
         row.BackgroundColor3 = COL_BG
         row.BorderSizePixel = 0
         row.Parent = parent
-
-        local rowCorner = Instance.new("UICorner")
-        rowCorner.CornerRadius = UDim.new(0, 5)
-        rowCorner.Parent = row
+        local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0, 5); rc.Parent = row
 
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(1, -60, 1, 0)
@@ -947,10 +1011,7 @@ local function CreateUI()
         pill.BackgroundColor3 = Config[key] and COL_ACCENT or COL_STROKE
         pill.BorderSizePixel = 0
         pill.Parent = row
-
-        local pillCorner = Instance.new("UICorner")
-        pillCorner.CornerRadius = UDim.new(1, 0)
-        pillCorner.Parent = pill
+        local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(1, 0); pc.Parent = pill
 
         local knob = Instance.new("Frame")
         knob.Size = UDim2.new(0, 16, 0, 16)
@@ -958,10 +1019,7 @@ local function CreateUI()
         knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         knob.BorderSizePixel = 0
         knob.Parent = pill
-
-        local knobCorner = Instance.new("UICorner")
-        knobCorner.CornerRadius = UDim.new(1, 0)
-        knobCorner.Parent = knob
+        local kc = Instance.new("UICorner"); kc.CornerRadius = UDim.new(1, 0); kc.Parent = knob
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, 0, 1, 0)
@@ -979,7 +1037,6 @@ local function CreateUI()
             }):Play()
             if callback then callback(Config[key]) end
         end)
-
         return row
     end
 
@@ -990,10 +1047,7 @@ local function CreateUI()
         row.BackgroundColor3 = COL_BG
         row.BorderSizePixel = 0
         row.Parent = parent
-
-        local rowCorner = Instance.new("UICorner")
-        rowCorner.CornerRadius = UDim.new(0, 5)
-        rowCorner.Parent = row
+        local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0, 5); rc.Parent = row
 
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(1, -60, 0, 20)
@@ -1023,10 +1077,7 @@ local function CreateUI()
         track.BackgroundColor3 = COL_STROKE
         track.BorderSizePixel = 0
         track.Parent = row
-
-        local trackCorner = Instance.new("UICorner")
-        trackCorner.CornerRadius = UDim.new(1, 0)
-        trackCorner.Parent = track
+        local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(1, 0); tc.Parent = track
 
         local pct = (default - min) / (max - min)
         local fill = Instance.new("Frame")
@@ -1034,10 +1085,7 @@ local function CreateUI()
         fill.BackgroundColor3 = COL_ACCENT
         fill.BorderSizePixel = 0
         fill.Parent = track
-
-        local fillCorner = Instance.new("UICorner")
-        fillCorner.CornerRadius = UDim.new(1, 0)
-        fillCorner.Parent = fill
+        local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1, 0); fc.Parent = fill
 
         local dragging = false
         local function updateFromX(x)
@@ -1058,19 +1106,14 @@ local function CreateUI()
             dragging = true
             updateFromX(UserInputService:GetMouseLocation().X)
         end)
-
         UserInputService.InputChanged:Connect(function(input)
             if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
                 updateFromX(input.Position.X)
             end
         end)
-
         UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = false
-            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
         end)
-
         return row
     end
 
@@ -1084,10 +1127,7 @@ local function CreateUI()
         btn.Text = ""
         btn.BorderSizePixel = 0
         btn.Parent = sidebar
-
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 5)
-        btnCorner.Parent = btn
+        local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0, 5); bc.Parent = btn
 
         local iconLbl = Instance.new("TextLabel")
         iconLbl.Size = UDim2.new(0, 20, 1, 0)
@@ -1121,7 +1161,6 @@ local function CreateUI()
             iconLbl.TextColor3 = COL_ACCENT
             lbl.TextColor3 = COL_TEXT
         end)
-
         sidebarButtons[name] = { btn = btn, icon = iconLbl, lbl = lbl }
         return btn
     end
@@ -1144,10 +1183,7 @@ local function CreateUI()
     welcome.Font = Enum.Font.Gotham
     welcome.TextWrapped = true
     welcome.Parent = homePage
-
-    local wCorner = Instance.new("UICorner")
-    wCorner.CornerRadius = UDim.new(0, 5)
-    wCorner.Parent = welcome
+    local wC = Instance.new("UICorner"); wC.CornerRadius = UDim.new(0, 5); wC.Parent = welcome
 
     addSection(homePage, "STATUS", 100)
     local statusLbl = Instance.new("TextLabel")
@@ -1159,10 +1195,35 @@ local function CreateUI()
     statusLbl.TextSize = 12
     statusLbl.Font = Enum.Font.GothamMedium
     statusLbl.Parent = homePage
+    local sC = Instance.new("UICorner"); sC.CornerRadius = UDim.new(0, 5); sC.Parent = statusLbl
 
-    local sCorner = Instance.new("UICorner")
-    sCorner.CornerRadius = UDim.new(0, 5)
-    sCorner.Parent = statusLbl
+    addSection(homePage, "TRADE TRACKER", 176)
+    local tradeStatsLbl = Instance.new("TextLabel")
+    tradeStatsLbl.Size = UDim2.new(1, 0, 0, 76)
+    tradeStatsLbl.Position = UDim2.new(0, 0, 0, 202)
+    tradeStatsLbl.BackgroundColor3 = COL_BG
+    tradeStatsLbl.Text = "W: 0   L: 0   Even: 0   ?: 0\nLast: —"
+    tradeStatsLbl.TextColor3 = COL_TEXT
+    tradeStatsLbl.TextSize = 11
+    tradeStatsLbl.Font = Enum.Font.Gotham
+    tradeStatsLbl.TextWrapped = true
+    tradeStatsLbl.Parent = homePage
+    local tsC = Instance.new("UICorner"); tsC.CornerRadius = UDim.new(0, 5); tsC.Parent = tradeStatsLbl
+
+    task.spawn(function()
+        while tradeStatsLbl.Parent do
+            tradeStatsLbl.Text = string.format(
+                "W: %d   L: %d   Even: %d   ?: %d\nLast: %s",
+                TradeStats.Wins, TradeStats.Losses,
+                TradeStats.Even, TradeStats.Unknown,
+                TradeStats.LastResult
+            )
+            tradeStatsLbl.TextColor3 = (TradeStats.LastResult == "WIN") and COL_GREEN
+                or (TradeStats.LastResult == "LOSS") and COL_RED
+                or COL_TEXT
+            task.wait(1)
+        end
+    end)
 
     -- COMBAT
     addSection(combatPage, "CORE", 0)
@@ -1214,11 +1275,14 @@ local function CreateUI()
     addToggle(utilityPage, "Server Region Selector", "ServerRegion", 62, function(v) if v then StartServerRegion() end end)
     addToggle(utilityPage, "Anti-AFK", "AntiAFK", 98, function(v) if v then StartAntiAFK() end end)
     addToggle(utilityPage, "Discord RPC", "DiscordRPC", 134, function(v) if v then StartDiscordRPC() end end)
+    addToggle(utilityPage, "Trade W/L Tracker", "TradeTracker", 170, function(v)
+        if v then StartTradeTracker() end
+    end)
 
-    addSection(utilityPage, "CONFIG", 180)
+    addSection(utilityPage, "CONFIG", 216)
     local saveBtn = Instance.new("TextButton")
     saveBtn.Size = UDim2.new(1, 0, 0, 34)
-    saveBtn.Position = UDim2.new(0, 0, 0, 206)
+    saveBtn.Position = UDim2.new(0, 0, 0, 242)
     saveBtn.BackgroundColor3 = COL_ACCENT
     saveBtn.Text = "Save Config"
     saveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1226,9 +1290,7 @@ local function CreateUI()
     saveBtn.Font = Enum.Font.GothamBold
     saveBtn.BorderSizePixel = 0
     saveBtn.Parent = utilityPage
-    local sc = Instance.new("UICorner")
-    sc.CornerRadius = UDim.new(0, 5)
-    sc.Parent = saveBtn
+    local sc = Instance.new("UICorner"); sc.CornerRadius = UDim.new(0, 5); sc.Parent = saveBtn
     saveBtn.MouseButton1Click:Connect(function()
         SaveConfig()
         Notify("Oynx Hub", "Config saved", 2)
@@ -1236,20 +1298,52 @@ local function CreateUI()
 
     local loadBtn = Instance.new("TextButton")
     loadBtn.Size = UDim2.new(1, 0, 0, 34)
-    loadBtn.Position = UDim2.new(0, 0, 0, 246)
+    loadBtn.Position = UDim2.new(0, 0, 0, 282)
     loadBtn.BackgroundColor3 = COL_PANEL
-    loadBtn.Text = "Load Config (rejoins)"
+    loadBtn.Text = "Load Config"
     loadBtn.TextColor3 = COL_TEXT
     loadBtn.TextSize = 12
     loadBtn.Font = Enum.Font.GothamBold
     loadBtn.BorderSizePixel = 0
     loadBtn.Parent = utilityPage
-    local lc = Instance.new("UICorner")
-    lc.CornerRadius = UDim.new(0, 5)
-    lc.Parent = loadBtn
+    local lc = Instance.new("UICorner"); lc.CornerRadius = UDim.new(0, 5); lc.Parent = loadBtn
     loadBtn.MouseButton1Click:Connect(function()
         LoadConfig()
-        Notify("Oynx Hub", "Config loaded — reloading UI", 2)
+        Notify("Oynx Hub", "Config loaded", 2)
+    end)
+
+    addSection(utilityPage, "SERVER", 336)
+    local rejoinBtn = Instance.new("TextButton")
+    rejoinBtn.Size = UDim2.new(1, 0, 0, 34)
+    rejoinBtn.Position = UDim2.new(0, 0, 0, 362)
+    rejoinBtn.BackgroundColor3 = COL_ACCENT
+    rejoinBtn.Text = "Rejoin Last Server"
+    rejoinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rejoinBtn.TextSize = 12
+    rejoinBtn.Font = Enum.Font.GothamBold
+    rejoinBtn.BorderSizePixel = 0
+    rejoinBtn.Parent = utilityPage
+    local rjC = Instance.new("UICorner"); rjC.CornerRadius = UDim.new(0, 5); rjC.Parent = rejoinBtn
+    rejoinBtn.MouseButton1Click:Connect(function()
+        SaveCurrentJob()
+        task.wait(0.5)
+        RejoinLastServer()
+    end)
+
+    local saveJobBtn = Instance.new("TextButton")
+    saveJobBtn.Size = UDim2.new(1, 0, 0, 34)
+    saveJobBtn.Position = UDim2.new(0, 0, 0, 402)
+    saveJobBtn.BackgroundColor3 = COL_PANEL
+    saveJobBtn.Text = "Save Current Server"
+    saveJobBtn.TextColor3 = COL_TEXT
+    saveJobBtn.TextSize = 12
+    saveJobBtn.Font = Enum.Font.GothamBold
+    saveJobBtn.BorderSizePixel = 0
+    saveJobBtn.Parent = utilityPage
+    local sjC = Instance.new("UICorner"); sjC.CornerRadius = UDim.new(0, 5); sjC.Parent = saveJobBtn
+    saveJobBtn.MouseButton1Click:Connect(function()
+        SaveCurrentJob()
+        Notify("Oynx Hub", "Server saved", 2)
     end)
 
     -- SETTINGS
@@ -1264,10 +1358,7 @@ local function CreateUI()
     pickerFrame.BackgroundColor3 = COL_BG
     pickerFrame.BorderSizePixel = 0
     pickerFrame.Parent = settingsPage
-
-    local pfCorner = Instance.new("UICorner")
-    pfCorner.CornerRadius = UDim.new(0, 6)
-    pfCorner.Parent = pickerFrame
+    local pfC = Instance.new("UICorner"); pfC.CornerRadius = UDim.new(0, 6); pfC.Parent = pickerFrame
 
     local wheel = Instance.new("ImageLabel")
     wheel.Size = UDim2.new(0, 160, 0, 160)
@@ -1276,10 +1367,7 @@ local function CreateUI()
     wheel.BorderSizePixel = 0
     wheel.Image = "rbxassetid://5655816373"
     wheel.Parent = pickerFrame
-
-    local wheelCorner = Instance.new("UICorner")
-    wheelCorner.CornerRadius = UDim.new(1, 0)
-    wheelCorner.Parent = wheel
+    local wcc = Instance.new("UICorner"); wcc.CornerRadius = UDim.new(1, 0); wcc.Parent = wheel
 
     local wheelStroke = Instance.new("UIStroke")
     wheelStroke.Color = COL_STROKE
@@ -1293,10 +1381,7 @@ local function CreateUI()
     marker.BorderColor3 = Color3.fromRGB(0, 0, 0)
     marker.Position = UDim2.new(0, 85, 0, 85)
     marker.Parent = wheel
-
-    local markerCorner = Instance.new("UICorner")
-    markerCorner.CornerRadius = UDim.new(1, 0)
-    markerCorner.Parent = marker
+    local mC = Instance.new("UICorner"); mC.CornerRadius = UDim.new(1, 0); mC.Parent = marker
 
     local brightTrack = Instance.new("Frame")
     brightTrack.Size = UDim2.new(0, 16, 0, 160)
@@ -1304,10 +1389,7 @@ local function CreateUI()
     brightTrack.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     brightTrack.BorderSizePixel = 0
     brightTrack.Parent = pickerFrame
-
-    local bCorner = Instance.new("UICorner")
-    bCorner.CornerRadius = UDim.new(1, 0)
-    bCorner.Parent = brightTrack
+    local bC = Instance.new("UICorner"); bC.CornerRadius = UDim.new(1, 0); bC.Parent = brightTrack
 
     local brightGrad = Instance.new("UIGradient")
     brightGrad.Color = ColorSequence.new{
@@ -1324,10 +1406,7 @@ local function CreateUI()
     brightKnob.BorderSizePixel = 2
     brightKnob.BorderColor3 = Color3.fromRGB(0, 0, 0)
     brightKnob.Parent = brightTrack
-
-    local bkCorner = Instance.new("UICorner")
-    bkCorner.CornerRadius = UDim.new(1, 0)
-    bkCorner.Parent = brightKnob
+    local bkC = Instance.new("UICorner"); bkC.CornerRadius = UDim.new(1, 0); bkC.Parent = brightKnob
 
     local tabHolder = Instance.new("Frame")
     tabHolder.Size = UDim2.new(1, -20, 0, 26)
@@ -1338,7 +1417,6 @@ local function CreateUI()
     local tabs = {}
     local tabNames = {"RGB", "HSV", "HEX"}
     local tabW = 1 / #tabNames
-
     for i, name in ipairs(tabNames) do
         local tb = Instance.new("TextButton")
         tb.Size = UDim2.new(tabW, -4, 1, 0)
@@ -1350,11 +1428,7 @@ local function CreateUI()
         tb.Font = Enum.Font.GothamMedium
         tb.BorderSizePixel = 0
         tb.Parent = tabHolder
-
-        local tc = Instance.new("UICorner")
-        tc.CornerRadius = UDim.new(0, 4)
-        tc.Parent = tb
-
+        local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(0, 4); tc.Parent = tb
         tabs[name] = tb
     end
 
@@ -1370,7 +1444,6 @@ local function CreateUI()
         row.Position = UDim2.new(0, 0, 0, yOff)
         row.BackgroundTransparency = 1
         row.Parent = valueHolder
-
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(0.5, 0, 1, 0)
         lbl.BackgroundTransparency = 1
@@ -1380,7 +1453,6 @@ local function CreateUI()
         lbl.Font = Enum.Font.Gotham
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.Parent = row
-
         local val = Instance.new("TextLabel")
         val.Size = UDim2.new(0.5, 0, 1, 0)
         val.Position = UDim2.new(0.5, 0, 0, 0)
@@ -1391,7 +1463,6 @@ local function CreateUI()
         val.Font = Enum.Font.GothamMedium
         val.TextXAlignment = Enum.TextXAlignment.Right
         val.Parent = row
-
         return val
     end
 
@@ -1527,16 +1598,14 @@ local function CreateUI()
     unloadBtn.Font = Enum.Font.GothamBold
     unloadBtn.BorderSizePixel = 0
     unloadBtn.Parent = settingsPage
-
-    local uCorner = Instance.new("UICorner")
-    uCorner.CornerRadius = UDim.new(0, 5)
-    uCorner.Parent = unloadBtn
+    local uC = Instance.new("UICorner"); uC.CornerRadius = UDim.new(0, 5); uC.Parent = unloadBtn
 
     unloadBtn.MouseButton1Click:Connect(function()
         SaveConfig()
         for _, c in ipairs({parryConnection, clashConnection, spamConnection, espConnection,
                             adminConnection, predictorConnection, abilityConnection, dodgeConnection,
-                            trailConnection, speedoConnection, nameEspConnection, afkConnection, rejoinConnection}) do
+                            trailConnection, speedoConnection, nameEspConnection, afkConnection,
+                            rejoinConnection, tradeConnection}) do
             if c then c:Disconnect() end
         end
         if espFolder then espFolder:Destroy() end
@@ -1592,6 +1661,9 @@ if Config.PlayerNamesESP then StartPlayerNamesESP() end
 if Config.AntiAFK then StartAntiAFK() end
 if Config.AutoRejoin then StartAutoRejoin() end
 if Config.DiscordRPC then StartDiscordRPC() end
+if Config.TradeTracker then StartTradeTracker() end
+
+SaveCurrentJob()
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
