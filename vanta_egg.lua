@@ -1,5 +1,6 @@
 -- language: Lua, file: vanta_egg.lua, target: Roblox Steal An Egg
--- v2: cached remote scan, cached egg scan, throttled loops, fixed anti-cheat write path
+-- v3: speed capped 190 with bypass, pet egg targeting, best-first priority,
+-- clean minimal UI, auto treadmill, egg ESP, auto hatch, auto place
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -7,12 +8,24 @@ local player = Players.LocalPlayer
 
 -- ========== CONFIG ==========
 local CONFIG = {
-    speed = 120,
-    stealInterval = 0.05,   -- seconds between steal fires
-    rescanInterval = 2,     -- seconds between workspace rescans
+    speed = 190,             -- capped, bypassed
+    stealInterval = 0.04,
+    rescanInterval = 1.5,
     teleportToEgg = true,
     autoSteal = true,
     antiCheatBypass = true,
+    bestFirst = true,        -- priority: rarest egg first
+    autoTreadmill = false,
+    autoHatch = false,
+    autoPlace = false,
+    eggESP = false,
+}
+
+-- rarity priority — higher index = steal first
+local RARITY_PRIORITY = {
+    ["divine"] = 10, ["eternal"] = 9, ["secret"] = 8,
+    ["cosmic"] = 7, ["mythic"] = 6, ["legendary"] = 5,
+    ["epic"] = 4, ["rare"] = 3, ["uncommon"] = 2, ["common"] = 1,
 }
 
 -- ========== STATE ==========
@@ -20,38 +33,31 @@ local state = {
     enabled = true,
     stealConn = nil,
     speedConn = nil,
-    scanConn = nil,
     originalSpeed = 16,
     originalJump = 50,
     cachedEggs = {},
     cachedRemotes = {},
+    cachedHatches = {},
+    cachedPlaces = {},
     lastScan = 0,
+    espParts = {},
 }
 
 -- ========== SAFE GETTERS ==========
-local function getChar()
-    return player.Character
-end
-
 local function getHRP()
-    local c = getChar()
-    if not c then return nil end
-    return c:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    return c and c:FindFirstChild("HumanoidRootPart") or nil
 end
 
 local function getHumanoid()
-    local c = getChar()
-    if not c then return nil end
-    return c:FindFirstChildOfClass("Humanoid")
+    local c = player.Character
+    return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
 -- ========== ANTI-CHEAT BYPASS ==========
--- spoofs the read AND blocks the server-side detection remotes.
--- the real fix for speed detection is not writing WalkSpeed every frame —
--- write once, then spoof reads so the client-side check sees 16.
 local function enableAntiCheat()
     if not CONFIG.antiCheatBypass then return end
-    local ok = pcall(function()
+    pcall(function()
         local mt = getrawmetatable(game)
         local oldIndex = mt.__index
         local oldNamecall = mt.__namecall
@@ -71,7 +77,7 @@ local function enableAntiCheat()
             local method = getnamecallmethod()
             if method == "FireServer" and typeof(self) == "Instance" and self:IsA("RemoteEvent") then
                 local n = self.Name:lower()
-                if n:find("detect") or n:find("report") or n:find("check") or n:find("flag") then
+                if n:find("detect") or n:find("report") or n:find("check") or n:find("flag") or n:find("anticheat") then
                     return nil
                 end
             end
@@ -80,36 +86,54 @@ local function enableAntiCheat()
 
         setreadonly(mt, true)
     end)
-    if not ok then
-        warn("[VANTA] anti-cheat hook failed — executor missing getrawmetatable/newcclosure")
-    end
 end
 
--- ========== SCAN (cached) ==========
--- walking GetDescendants every frame is the lag source.
--- scan once, cache, rescan on a timer only.
+-- ========== SCAN ==========
 local function scanWorkspace()
-    local eggs = {}
-    local remotes = {}
-    local myPos = getHRP() and getHRP().Position or Vector3.zero
+    local eggs, remotes, hatches, places = {}, {}, {}, {}
+    local hrp = getHRP()
+    local myPos = hrp and hrp.Position or Vector3.zero
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
             local n = obj.Name:lower()
             local pn = obj.Parent and obj.Parent.Name:lower() or ""
-            if n:find("egg") or pn:find("egg") then
-                table.insert(eggs, obj)
+            if n:find("egg") or pn:find("egg") or pn:find("nest") then
+                -- detect rarity from name or attributes
+                local rarity = "common"
+                for r in pairs(RARITY_PRIORITY) do
+                    if n:find(r) or pn:find(r) then rarity = r end
+                end
+                table.insert(eggs, {part = obj, rarity = rarity, dist = (obj.Position - myPos).Magnitude})
             end
         elseif obj:IsA("RemoteEvent") then
             local n = obj.Name:lower()
-            if n:find("steal") or n:find("collect") or n:find("pickup") or n:find("egg") then
+            if n:find("steal") or n:find("collect") or n:find("pickup") or n:find("grab") then
                 table.insert(remotes, obj)
+            elseif n:find("hatch") then
+                table.insert(hatches, obj)
+            elseif n:find("place") or n:find("equip") then
+                table.insert(places, obj)
             end
         end
     end
 
+    -- sort eggs by best-first if enabled
+    if CONFIG.bestFirst then
+        table.sort(eggs, function(a, b)
+            local pa = RARITY_PRIORITY[a.rarity] or 0
+            local pb = RARITY_PRIORITY[b.rarity] or 0
+            if pa ~= pb then return pa > pb end
+            return a.dist < b.dist
+        end)
+    else
+        table.sort(eggs, function(a, b) return a.dist < b.dist end)
+    end
+
     state.cachedEggs = eggs
     state.cachedRemotes = remotes
+    state.cachedHatches = hatches
+    state.cachedPlaces = places
     state.lastScan = tick()
 end
 
@@ -119,45 +143,96 @@ local function maybeRescan()
     end
 end
 
--- ========== TELEPORT ==========
-local function nearestEgg()
-    local hrp = getHRP()
-    if not hrp then return nil end
-    local myPos = hrp.Position
-    local best, bestD = nil, math.huge
-    for _, egg in ipairs(state.cachedEggs) do
-        if egg.Parent then
-            local d = (egg.Position - myPos).Magnitude
-            if d < bestD then bestD = d; best = egg end
-        end
+-- ========== BEST EGG ==========
+local function bestEgg()
+    for _, e in ipairs(state.cachedEggs) do
+        if e.part.Parent then return e end
     end
-    return best
+    return nil
 end
 
-local function teleportToEgg()
-    local egg = nearestEgg()
-    if not egg then return end
+local function teleportToBest()
+    local e = bestEgg()
+    if not e then return end
     local hrp = getHRP()
     if hrp then
-        hrp.CFrame = egg.CFrame + Vector3.new(0, 3, 0)
+        hrp.CFrame = e.part.CFrame + Vector3.new(0, 4, 0)
+    end
+end
+
+-- ========== ESP ==========
+local function clearESP()
+    for _, g in ipairs(state.espParts) do
+        if g and g.Parent then g:Destroy() end
+    end
+    state.espParts = {}
+end
+
+local function renderESP()
+    if not CONFIG.eggESP then clearESP(); return end
+    -- lightweight: tag closest 5 eggs only
+    for i = 1, math.min(5, #state.cachedEggs) do
+        local e = state.cachedEggs[i]
+        if e.part.Parent and not e.esp then
+            local bb = Instance.new("BillboardGui")
+            bb.Size = UDim2.new(0, 100, 0, 30)
+            bb.Adornee = e.part
+            bb.AlwaysOnTop = true
+            bb.Parent = e.part
+
+            local t = Instance.new("TextLabel")
+            t.Size = UDim2.new(1, 0, 1, 0)
+            t.BackgroundTransparency = 1
+            t.Text = string.upper(e.rarity) .. " | " .. math.floor(e.dist) .. "m"
+            t.TextColor3 = Color3.fromRGB(180, 140, 255)
+            t.TextStrokeTransparency = 0
+            t.Font = Enum.Font.GothamBold
+            t.TextSize = 11
+            t.Parent = bb
+
+            e.esp = bb
+            table.insert(state.espParts, bb)
+        end
     end
 end
 
 -- ========== STEAL LOOP ==========
--- fires only cached remotes, on its own interval, not every Heartbeat.
 local function startSteal()
     if state.stealConn then state.stealConn:Disconnect() end
     state.stealConn = task.spawn(function()
         while state.enabled and CONFIG.autoSteal do
             maybeRescan()
+            if CONFIG.eggESP then renderESP() end
 
             if CONFIG.teleportToEgg then
-                teleportToEgg()
+                teleportToBest()
             end
 
+            -- fire steal remotes targeting the best egg
+            local target = bestEgg()
             for _, remote in ipairs(state.cachedRemotes) do
                 if remote.Parent then
-                    pcall(function() remote:FireServer() end)
+                    pcall(function()
+                        if target and target.part then
+                            remote:FireServer(target.part)
+                        else
+                            remote:FireServer()
+                        end
+                    end)
+                end
+            end
+
+            -- auto hatch if enabled and something is ready
+            if CONFIG.autoHatch then
+                for _, h in ipairs(state.cachedHatches) do
+                    if h.Parent then pcall(function() h:FireServer() end) end
+                end
+            end
+
+            -- auto place if enabled
+            if CONFIG.autoPlace then
+                for _, p in ipairs(state.cachedPlaces) do
+                    if p.Parent then pcall(function() p:FireServer() end) end
                 end
             end
 
@@ -167,8 +242,6 @@ local function startSteal()
 end
 
 -- ========== SPEED ==========
--- write once per character, don't re-write every frame — the per-frame
--- write is what trips server-side replication checks.
 local function applySpeed()
     local h = getHumanoid()
     if not h then return end
@@ -189,11 +262,32 @@ local function startSpeed()
     end)
 end
 
+-- ========== TREADMILL ==========
+local function startTreadmill()
+    if not CONFIG.autoTreadmill then return end
+    task.spawn(function()
+        while state.enabled and CONFIG.autoTreadmill do
+            -- look for treadmill part, stand on it
+            local hrp = getHRP()
+            if hrp then
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj:IsA("BasePart") and obj.Name:lower():find("treadmill") then
+                        hrp.CFrame = obj.CFrame + Vector3.new(0, 3, 0)
+                        break
+                    end
+                end
+            end
+            task.wait(1)
+        end
+    end)
+end
+
 -- ========== STOP ==========
 local function stopAll()
     state.enabled = false
     if state.stealConn then state.stealConn:Disconnect() state.stealConn = nil end
     if state.speedConn then state.speedConn:Disconnect() state.speedConn = nil end
+    clearESP()
     local h = getHumanoid()
     if h then
         h.WalkSpeed = state.originalSpeed
@@ -201,103 +295,138 @@ local function stopAll()
     end
 end
 
--- ========== UI ==========
+-- ========== UI (clean minimal) ==========
 local gui = Instance.new("ScreenGui")
 gui.Name = "VantaEgg"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 220, 0, 280)
-frame.Position = UDim2.new(0, 20, 0, 100)
-frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 240, 0, 340)
+main.Position = UDim2.new(0, 20, 0, 100)
+main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+-- header
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 36)
+header.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+header.Parent = main
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-title.Text = "VANTA EGG"
+title.Size = UDim2.new(1, -20, 1, 0)
+title.Position = UDim2.new(0, 14, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "VANTA"
 title.TextColor3 = Color3.fromRGB(180, 140, 255)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.Parent = frame
-Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+title.TextSize = 15
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
 
+local dot = Instance.new("Frame")
+dot.Size = UDim2.new(0, 8, 0, 8)
+dot.Position = UDim2.new(1, -20, 0.5, -4)
+dot.BackgroundColor3 = Color3.fromRGB(100, 220, 100)
+dot.Parent = header
+Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+-- status line
 local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1, -20, 0, 20)
-status.Position = UDim2.new(0, 10, 0, 40)
+status.Size = UDim2.new(1, -28, 0, 18)
+status.Position = UDim2.new(0, 14, 0, 42)
 status.BackgroundTransparency = 1
-status.Text = "RUNNING"
-status.TextColor3 = Color3.fromRGB(100, 220, 100)
+status.Text = "speed 190 | best-first | bypass on"
+status.TextColor3 = Color3.fromRGB(90, 90, 110)
 status.Font = Enum.Font.Gotham
-status.TextSize = 11
-status.Parent = frame
+status.TextSize = 10
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.Parent = main
 
-local function mkBtn(text, y, bg)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, -20, 0, 35)
-    b.Position = UDim2.new(0, 10, 0, y)
-    b.BackgroundColor3 = bg or Color3.fromRGB(40, 40, 55)
-    b.Text = text
-    b.TextColor3 = Color3.fromRGB(200, 200, 220)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
-    b.Parent = frame
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-    return b
+-- toggle row
+local function mkRow(text, y, cb, on)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -28, 0, 32)
+    btn.Position = UDim2.new(0, 14, 0, y)
+    btn.BackgroundColor3 = on and Color3.fromRGB(40, 35, 60) or Color3.fromRGB(22, 22, 30)
+    btn.Text = text
+    btn.TextColor3 = on and Color3.fromRGB(180, 140, 255) or Color3.fromRGB(120, 120, 140)
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 11
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.Parent = main
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    btn.MouseButton1Click:Connect(function()
+        cb()
+        btn.BackgroundColor3 = CONFIG[text:lower()] and Color3.fromRGB(40, 35, 60) or Color3.fromRGB(22, 22, 30)
+    end)
+    return btn
 end
 
-local toggle = mkBtn("TOGGLE ON/OFF", 70)
-toggle.MouseButton1Click:Connect(function()
-    state.enabled = not state.enabled
-    if state.enabled then
-        status.Text = "RUNNING"
-        status.TextColor3 = Color3.fromRGB(100, 220, 100)
-        startSteal()
-        startSpeed()
-    else
-        status.Text = "STOPPED"
-        status.TextColor3 = Color3.fromRGB(220, 100, 100)
-        stopAll()
-    end
+mkRow("Auto Steal", 68, function()
+    CONFIG.autoSteal = not CONFIG.autoSteal
 end)
 
-local tpBtn = mkBtn("TP TO EGG", 115)
-tpBtn.MouseButton1Click:Connect(teleportToEgg)
-
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Size = UDim2.new(1, -20, 0, 20)
-speedLabel.Position = UDim2.new(0, 10, 0, 160)
-speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Speed: " .. CONFIG.speed
-speedLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
-speedLabel.Font = Enum.Font.Gotham
-speedLabel.TextSize = 11
-speedLabel.Parent = frame
-
-local speedBtn = mkBtn("50 | 120 | 300", 185)
-speedBtn.TextSize = 10
-local speeds = {50, 120, 300}
-local speedIndex = 2
-speedBtn.MouseButton1Click:Connect(function()
-    speedIndex = speedIndex % #speeds + 1
-    CONFIG.speed = speeds[speedIndex]
-    speedLabel.Text = "Speed: " .. CONFIG.speed
-    applySpeed()
+mkRow("Best First", 104, function()
+    CONFIG.bestFirst = not CONFIG.bestFirst
+    scanWorkspace()
 end)
 
-local killBtn = mkBtn("STOP ALL", 220, Color3.fromRGB(80, 30, 30))
-killBtn.TextColor3 = Color3.fromRGB(220, 150, 150)
-killBtn.MouseButton1Click:Connect(function()
+mkRow("Egg ESP", 140, function()
+    CONFIG.eggESP = not CONFIG.eggESP
+    if not CONFIG.eggESP then clearESP() end
+end)
+
+mkRow("Auto Hatch", 176, function()
+    CONFIG.autoHatch = not CONFIG.autoHatch
+end)
+
+mkRow("Auto Place", 212, function()
+    CONFIG.autoPlace = not CONFIG.autoPlace
+end)
+
+-- stop button
+local stopBtn = Instance.new("TextButton")
+stopBtn.Size = UDim2.new(1, -28, 0, 34)
+stopBtn.Position = UDim2.new(0, 14, 0, 254)
+stopBtn.BackgroundColor3 = Color3.fromRGB(60, 22, 22)
+stopBtn.Text = "STOP ALL"
+stopBtn.TextColor3 = Color3.fromRGB(220, 130, 130)
+stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 11
+stopBtn.Parent = main
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 6)
+stopBtn.MouseButton1Click:Connect(function()
     stopAll()
     state.enabled = false
-    status.Text = "STOPPED"
-    status.TextColor3 = Color3.fromRGB(220, 100, 100)
+    dot.BackgroundColor3 = Color3.fromRGB(220, 100, 100)
+    status.Text = "stopped"
+end)
+
+-- re-enable button (small)
+local reBtn = Instance.new("TextButton")
+reBtn.Size = UDim2.new(1, -28, 0, 24)
+reBtn.Position = UDim2.new(0, 14, 0, 296)
+reBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+reBtn.Text = "resume"
+reBtn.TextColor3 = Color3.fromRGB(120, 120, 140)
+reBtn.Font = Enum.Font.Gotham
+reBtn.TextSize = 10
+reBtn.Parent = main
+Instance.new("UICorner", reBtn).CornerRadius = UDim.new(0, 6)
+reBtn.MouseButton1Click:Connect(function()
+    if not state.enabled then
+        state.enabled = true
+        dot.BackgroundColor3 = Color3.fromRGB(100, 220, 100)
+        status.Text = "speed 190 | best-first | bypass on"
+        startSteal()
+        startSpeed()
+    end
 end)
 
 -- ========== BOOT ==========
@@ -305,6 +434,7 @@ enableAntiCheat()
 scanWorkspace()
 startSteal()
 startSpeed()
+startTreadmill()
 
 player.CharacterAdded:Connect(function()
     task.wait(1)
@@ -313,4 +443,5 @@ player.CharacterAdded:Connect(function()
     end
 end)
 
-print(("[VANTA] loaded. %d eggs, %d remotes cached."):format(#state.cachedEggs, #state.cachedRemotes))
+print(("[VANTA v3] %d eggs | %d remotes | %d hatch | %d place"):format(
+    #state.cachedEggs, #state.cachedRemotes, #state.cachedHatches, #state.cachedPlaces))
